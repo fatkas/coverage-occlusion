@@ -1,0 +1,4 @@
+.DS_Store
+*.a
+*.lib
+*.bin.h

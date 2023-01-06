@@ -1,0 +1,566 @@
+/*
+ * Copyright 2011-2022 Branimir Karadzic. All rights reserved.
+ * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
+ */
+
+#include "common.h"
+#include "bgfx_utils.h"
+
+#include <bx/uint32_t.h>
+#include <bx/thread.h>
+#include <bx/os.h>
+#include "imgui/imgui.h"
+#include "camera.h"
+
+#include "rasterizer.h"
+
+#include <bgfx/embedded_shader.h>
+
+// embedded shaders
+#include "vs_occlusion.bin.h"
+#include "fs_occlusion.bin.h"
+
+#include "vs_fullscreen.bin.h"
+#include "fs_fullscreen.bin.h"
+
+namespace
+{
+
+static const bgfx::EmbeddedShader s_embeddedShaders[] =
+{
+	BGFX_EMBEDDED_SHADER(vs_occlusion),
+	BGFX_EMBEDDED_SHADER(fs_occlusion),
+
+    BGFX_EMBEDDED_SHADER(vs_fullscreen),
+    BGFX_EMBEDDED_SHADER(fs_fullscreen),
+
+	BGFX_EMBEDDED_SHADER_END()
+};
+
+struct PosColorVertex
+{
+	float m_x;
+	float m_y;
+	float m_z;
+	uint32_t m_abgr;
+
+	static void init()
+	{
+		ms_layout
+			.begin()
+			.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+			.add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
+			.end();
+	}
+
+	static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout PosColorVertex::ms_layout;
+
+static PosColorVertex s_cubeVertices[8] =
+{
+	{-1.0f,  1.0f,  1.0f, 0xff000000 },
+	{ 1.0f,  1.0f,  1.0f, 0xff0000ff },
+	{-1.0f, -1.0f,  1.0f, 0xff00ff00 },
+	{ 1.0f, -1.0f,  1.0f, 0xff00ffff },
+	{-1.0f,  1.0f, -1.0f, 0xffff0000 },
+	{ 1.0f,  1.0f, -1.0f, 0xffff00ff },
+	{-1.0f, -1.0f, -1.0f, 0xffffff00 },
+	{ 1.0f, -1.0f, -1.0f, 0xffffffff },
+};
+
+static vec4_t s_cubeVerticesSIMD[8] =
+{
+    {-1.0f,  1.0f,  1.0f, 1.f },
+    { 1.0f,  1.0f,  1.0f, 1.f },
+    {-1.0f, -1.0f,  1.0f, 1.f },
+    { 1.0f, -1.0f,  1.0f, 1.f },
+    {-1.0f,  1.0f, -1.0f, 1.f },
+    { 1.0f,  1.0f, -1.0f, 1.f },
+    {-1.0f, -1.0f, -1.0f, 1.f },
+    { 1.0f, -1.0f, -1.0f, 1.f },
+};
+
+static const uint16_t s_cubeIndices[36] =
+{
+	0, 1, 2, // 0
+	1, 3, 2,
+	4, 6, 5, // 2
+	5, 6, 7,
+	0, 2, 4, // 4
+	4, 2, 6,
+	1, 5, 3, // 6
+	5, 7, 3,
+	0, 4, 1, // 8
+	4, 5, 1,
+	2, 3, 6, // 10
+	6, 3, 7,
+};
+
+static const float s_mod[6][3] =
+{
+	{ 1.0f, 1.0f, 1.0f },
+	{ 1.0f, 0.0f, 0.0f },
+	{ 0.0f, 1.0f, 0.0f },
+	{ 0.0f, 0.0f, 1.0f },
+	{ 1.0f, 1.0f, 0.0f },
+	{ 0.0f, 1.0f, 1.0f },
+};
+
+struct PosVertex
+{
+    float m_x;
+    float m_y;
+    float m_z;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
+            .end();
+    }
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout PosVertex::ms_layout;
+
+static void screenSpaceQuad(bgfx::Encoder* encoder)
+{
+    if (3 == bgfx::getAvailTransientVertexBuffer(3, PosVertex::ms_layout) )
+    {
+        bgfx::TransientVertexBuffer vb;
+        bgfx::allocTransientVertexBuffer(&vb, 3, PosVertex::ms_layout);
+        PosVertex* vertex = (PosVertex*)vb.data;
+
+        const float zz = 0.0f;
+
+        vertex[0].m_x = -1.f;
+        vertex[0].m_y = -1.f;
+        vertex[0].m_z = zz;
+
+        vertex[1].m_x = 3.f;
+        vertex[1].m_y = -1.f;
+        vertex[1].m_z = zz;
+
+        vertex[2].m_x = -1.f;
+        vertex[2].m_y = 3.f;
+        vertex[2].m_z = zz;
+
+        encoder->setVertexBuffer(0, &vb);
+    }
+}
+
+class ExampleOcclusionCulling : public entry::AppI
+{
+public:
+    ExampleOcclusionCulling(const char* _name, const char* _description, const char* _url)
+		: entry::AppI(_name, _description, _url)
+	{
+	}
+
+	void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) override
+	{
+		Args args(_argc, _argv);
+
+		m_width  = _width;
+		m_height = _height;
+		m_debug  = BGFX_DEBUG_NONE;
+		m_reset  = BGFX_RESET_NONE;
+
+		m_scrollArea = 0;
+		m_dim        = 32;
+		m_maxDim     = 40;
+		m_transform  = 0;
+
+		m_timeOffset = bx::getHPCounter();
+
+		m_deltaTimeNs    = 0;
+		m_deltaTimeAvgNs = 0;
+		m_numFrames      = 0;
+
+		bgfx::Init init;
+		init.type     = args.m_type;
+		init.vendorId = args.m_pciId;
+		init.platformData.nwh  = entry::getNativeWindowHandle(entry::kDefaultWindowHandle);
+		init.platformData.ndt  = entry::getNativeDisplayHandle();
+		init.resolution.width  = m_width;
+		init.resolution.height = m_height;
+		init.resolution.reset  = m_reset;
+		bgfx::init(init);
+
+		const bgfx::Caps* caps = bgfx::getCaps();
+		m_maxDim = (int32_t)bx::pow(float(caps->limits.maxDrawCalls), 1.0f/3.0f);
+
+		// Enable debug text.
+		bgfx::setDebug(m_debug);
+
+		// Set view 0 clear state.
+		bgfx::setViewClear(0
+			, BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH
+			, 0x303030ff
+			, 1.0f
+			, 0
+			);
+
+		// Create vertex stream declaration.
+		PosColorVertex::init();
+
+		bgfx::RendererType::Enum type = bgfx::getRendererType();
+
+		// Create program from shaders.
+		m_program = bgfx::createProgram(
+			  bgfx::createEmbeddedShader(s_embeddedShaders, type, "vs_occlusion")
+			, bgfx::createEmbeddedShader(s_embeddedShaders, type, "fs_occlusion")
+			, true /* destroy shaders when program is destroyed */
+			);
+
+        m_fullscreen = bgfx::createProgram(
+              bgfx::createEmbeddedShader(s_embeddedShaders, type, "vs_fullscreen")
+            , bgfx::createEmbeddedShader(s_embeddedShaders, type, "fs_fullscreen")
+            , true /* destroy shaders when program is destroyed */
+            );
+        s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
+
+		// Create static vertex buffer.
+		m_vbh = bgfx::createVertexBuffer(
+			  bgfx::makeRef(s_cubeVertices, sizeof(s_cubeVertices) )
+			, PosColorVertex::ms_layout
+			);
+
+		// Create static index buffer.
+		m_ibh = bgfx::createIndexBuffer(bgfx::makeRef(s_cubeIndices, sizeof(s_cubeIndices) ) );
+
+        PosVertex::init();
+
+		// Imgui.
+		imguiCreate();
+
+        cameraCreate();
+        cameraSetPosition({ 0.0f, 0.0f, -35.0f });
+        cameraSetVerticalAngle(0.f);
+
+        debug_coverage = bgfx::createTexture2D(Rasterizer::g_total_width, Rasterizer::g_total_height, false, 1, bgfx::TextureFormat::R8);
+
+        Rasterizer::Init();
+	}
+
+	int shutdown() override
+	{
+		// Cleanup.
+        cameraDestroy();
+		imguiDestroy();
+		bgfx::destroy(m_ibh);
+		bgfx::destroy(m_vbh);
+		bgfx::destroy(m_program);
+        bgfx::destroy(m_fullscreen);
+        bgfx::destroy(debug_coverage);
+        bgfx::destroy(s_texColor);
+
+		// Shutdown bgfx.
+		bgfx::shutdown();
+
+		return 0;
+	}
+
+	void submit()
+	{
+		bgfx::Encoder* encoder = bgfx::begin();
+
+		if (NULL != encoder)
+		{
+			for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i)
+			{
+                if (m_Visibility[i] == 0)
+                    continue;
+
+				encoder->setTransform(m_Transforms[i].data());
+                encoder->setVertexBuffer(0, m_vbh);
+                encoder->setIndexBuffer(m_ibh);
+
+                encoder->setState(
+                                  BGFX_STATE_DEFAULT
+                                  | (m_Wireframe ? BGFX_STATE_PT_LINES | BGFX_STATE_LINEAA | BGFX_STATE_BLEND_ALPHA : 0)
+                                  );
+                encoder->submit(0, m_program);
+
+                if (m_ShowCoverage && m_Occlusion)
+                {
+                    encoder->setTexture(0, s_texColor, debug_coverage);
+                    encoder->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+                    screenSpaceQuad(encoder);
+                    encoder->submit(0, m_fullscreen);
+                }
+			}
+
+			bgfx::end(encoder);
+		}
+	}
+
+	bool update() override
+	{
+		if (!entry::processEvents(m_width, m_height, m_debug, m_reset, &m_mouseState) )
+		{
+			int64_t now = bx::getHPCounter();
+			static int64_t last = now;
+			const int64_t hpFreq = bx::getHPFrequency();
+			const int64_t frameTime = now - last;
+			last = now;
+			const double freq = double(hpFreq);
+			const double toMs = 1000.0/freq;
+
+			m_deltaTimeNs += frameTime*1000000/hpFreq;
+
+            int old_transform = m_transform;
+
+			imguiBeginFrame(m_mouseState.m_mx
+				,  m_mouseState.m_my
+				, (m_mouseState.m_buttons[entry::MouseButton::Left  ] ? IMGUI_MBUT_LEFT   : 0)
+				| (m_mouseState.m_buttons[entry::MouseButton::Right ] ? IMGUI_MBUT_RIGHT  : 0)
+				| (m_mouseState.m_buttons[entry::MouseButton::Middle] ? IMGUI_MBUT_MIDDLE : 0)
+				,  m_mouseState.m_mz
+				, uint16_t(m_width)
+				, uint16_t(m_height)
+				);
+
+			showExampleDialog(this);
+
+			ImGui::SetNextWindowPos(
+				  ImVec2((float)m_width - (float)m_width / 4.0f - 10.0f, 10.0f)
+				, ImGuiCond_FirstUseEver
+				);
+			ImGui::SetNextWindowSize(
+				  ImVec2((float)m_width / 4.0f, (float)2.0f * m_height / 3.0f)
+				, ImGuiCond_FirstUseEver
+				);
+			ImGui::Begin("Settings"
+				, NULL
+				, 0
+				);
+
+            uint32_t visible = 0;
+            for (auto & v : m_Visibility)
+                visible += v != 0;
+
+			ImGui::RadioButton("Rotate",&m_transform,0);
+			ImGui::RadioButton("No rotate",&m_transform,1);
+			ImGui::Separator();
+
+            ImGui::Checkbox("Wireframe", &m_Wireframe);
+            ImGui::Checkbox("Occlusion", &m_Occlusion);
+            ImGui::Checkbox("Coverage", &m_ShowCoverage);
+			ImGui::SliderInt("Dim", &m_dim, 5, m_maxDim);
+            ImGui::SliderFloat("Spacing", &m_Spacing, 50.f, 100.f);
+			ImGui::Text("Draw calls: %d", m_dim*m_dim*m_dim);
+            ImGui::Text("Draw calls visible: %d", visible);
+			ImGui::Text("Avg Delta Time (1 second) [ms]: %0.4f", m_deltaTimeAvgNs/1000.0f);
+
+			ImGui::Separator();
+			const bgfx::Stats* stats = bgfx::getStats();
+			ImGui::Text("GPU %0.6f [ms]", double(stats->gpuTimeEnd - stats->gpuTimeBegin)*1000.0/stats->gpuTimerFreq);
+			ImGui::Text("CPU %0.6f [ms]", double(stats->cpuTimeEnd - stats->cpuTimeBegin)*1000.0/stats->cpuTimerFreq);
+            ImGui::Text("occlusion push %0.6f [ms]", double(occlusion_push_time)*1000.0/hpFreq);
+            ImGui::Text("occlusion sort %0.6f [ms]", double(occlusion_sort_time)*1000.0/hpFreq);
+            ImGui::Text("occlusion draw %0.6f [ms]", double(occlusion_draw_time)*1000.0/hpFreq);
+			ImGui::Text("Waiting for render thread %0.6f [ms]", double(stats->waitRender) * toMs);
+			ImGui::Text("Waiting for submit thread %0.6f [ms]", double(stats->waitSubmit) * toMs);
+
+			ImGui::End();
+
+			imguiEndFrame();
+
+            if (old_transform == 0 && m_transform == 1)
+                m_timeStop = now;
+            if (m_transform == 1)
+                now = m_timeStop;
+
+            cameraUpdate(m_deltaTimeNs/1000000.f, m_mouseState, ImGui::MouseOverArea());
+
+			// const bx::Vec3 at  = { 0.0f, 0.0f,   0.0f };
+			// const bx::Vec3 eye = { 0.0f, 0.0f, -35.0f };
+
+			float view[16];
+            cameraGetViewMtx(view);
+			// bx::mtxLookAt(view, eye, at);
+
+			const bgfx::Caps* caps = bgfx::getCaps();
+			float proj[16];
+			bx::mtxProj(proj, 60.0f, float(m_width)/float(m_height), 0.1f, 100.0f, caps->homogeneousDepth);
+
+			// Set view and projection matrix for view 0.
+			bgfx::setViewTransform(0, view, proj);
+
+			// Set view 0 default viewport.
+			bgfx::setViewRect(0, 0, 0, uint16_t(m_width), uint16_t(m_height) );
+
+			// This dummy draw call is here to make sure that view 0 is cleared
+			// if no other draw calls are submitted to view 0.
+			bgfx::touch(0);
+
+            {
+                float time = (float)( (now-m_timeOffset)/freq);
+
+                const float* mod = s_mod[0];
+
+                float mtxS[16];
+                const float scale = 0.25f;
+                bx::mtxScale(mtxS, scale, scale, scale);
+
+                const float step = m_Spacing * 0.01f;
+                float pos[3];
+                pos[0] = -step*m_dim / 2.0f;
+                pos[1] = -step*m_dim / 2.0f;
+                pos[2] = -15.0;
+
+                m_Transforms.resize(m_dim*m_dim*m_dim);
+                m_Visibility.resize(m_dim*m_dim*m_dim);
+                for (uint32_t zz = 0; zz < uint32_t(m_dim); ++zz)
+                {
+                    for (uint32_t yy = 0; yy < uint32_t(m_dim); ++yy)
+                    {
+                        for (uint32_t xx = 0; xx < uint32_t(m_dim); ++xx)
+                        {
+                            float mtxR[16];
+                            bx::mtxRotateXYZ(mtxR
+                                , (time + xx*0.21f)*mod[0]
+                                , (time + yy*0.37f)*mod[1]
+                                , (time + zz*0.13f)*mod[2]
+                                );
+
+                            float mtx[16];
+                            bx::mtxMul(mtx, mtxS, mtxR);
+
+                            mtx[12] = pos[0] + float(xx)*step;
+                            mtx[13] = pos[1] + float(yy)*step;
+                            mtx[14] = pos[2] + float(zz)*step;
+
+                            m_Transforms[xx + yy*m_dim + zz*m_dim*m_dim].resize(16);
+                            memcpy(m_Transforms[xx + yy*m_dim + zz*m_dim*m_dim].data(), mtx, sizeof(mtx));
+                        }
+                    }
+                }
+            }
+
+            if (m_Occlusion)
+            {
+                Matrix view_mat = MatrixSet(view), proj_mat = MatrixSet(proj);
+                Rasterizer rast( view_mat * proj_mat * MatrixScaling( 0.5f, -0.5f, 1.0f ) * MatrixTranslation( Vector4( .5f, 0.5f, 0.0f, 1.0f ) ) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f ) );
+
+                vec4_t box_min = {-1.f, -1.f, -1.f, 1.f};
+                vec4_t box_max = {+1.f, +1.f, +1.f, 1.f};
+
+                int64_t occlusion_start = bx::getHPCounter();
+                for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i )
+                {
+                    m_Visibility[i] = 0;
+                    rast.push_object(MatrixSet(m_Transforms[i].data()),
+                                     box_min, box_max,
+                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
+                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
+                                     &m_Visibility[i]);
+                }
+                int64_t occlusion_mid = bx::getHPCounter();
+                occlusion_push_time = occlusion_mid - occlusion_start;
+
+                occlusion_sort_time = occlusion_draw_time = 0;
+                for (int i = 0; i < Rasterizer::g_width; ++i)
+                {
+                    int tri_count = 0;
+                    occlusion_start = bx::getHPCounter();
+                    auto tris = rast.sort_triangles(i, tri_count);
+                    occlusion_mid = bx::getHPCounter();
+                    rast.draw_triangles(i, tris, tri_count);
+                    int64_t occlusion_end = bx::getHPCounter();
+
+                    occlusion_sort_time += occlusion_mid - occlusion_start;
+                    occlusion_draw_time += occlusion_end - occlusion_mid;
+                }
+
+                if (m_ShowCoverage)
+                {
+                    stl::vector<uint8_t> data(Rasterizer::g_total_width*Rasterizer::g_total_height);
+                    for ( int j = 0; j < Rasterizer::g_width; ++j )
+                    {
+                        for ( int y = 0; y < Tile::g_tile_height; ++y )
+                            for ( int x = 0; x < Tile::g_tile_width; ++x )
+                            {
+                                __m128i buf = rast.m_tiles[ j ].m_frame_buffer[y];
+                                unsigned int mask = ( (unsigned int*)( &buf ) )[ x >> 5 ];
+                                int bit = mask & ( 1 << ( x & 31 ) );
+                                data[j*Tile::g_tile_width + 127 - x + y*Rasterizer::g_total_width] = bit ? 255 : 0;
+                            }
+                    }
+                    const bgfx::Memory* mem = bgfx::makeRef(data.data(), (uint32_t)data.size());
+                    bgfx::updateTexture2D(debug_coverage, 0, 0, 0, 0, Rasterizer::g_total_width, Rasterizer::g_total_height, mem, Rasterizer::g_total_width);
+                }
+            }
+            else
+            {
+                occlusion_push_time = occlusion_sort_time = occlusion_draw_time = 0;
+                for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i )
+                    m_Visibility[i] = 1;
+            }
+
+			submit();
+
+			// Advance to next frame. Rendering thread will be kicked to
+			// process submitted rendering primitives.
+			bgfx::frame();
+
+			return true;
+		}
+
+		return false;
+	}
+
+	entry::MouseState m_mouseState;
+
+	uint32_t m_width;
+	uint32_t m_height;
+	uint32_t m_debug;
+	uint32_t m_reset;
+
+    float    m_Spacing = 60.f;
+
+    stl::vector<stl::vector<float>> m_Transforms;
+    stl::vector<int> m_Visibility;
+
+    bool     m_Wireframe = false;
+    bool     m_Occlusion = false;
+    bool     m_ShowCoverage = false;
+
+    int64_t  occlusion_push_time = 0;
+    int64_t  occlusion_sort_time = 0;
+    int64_t  occlusion_draw_time = 0;
+
+	int32_t  m_scrollArea;
+	int32_t  m_dim;
+	int32_t  m_maxDim;
+	int32_t  m_transform;
+
+	int64_t  m_timeOffset;
+    int64_t  m_timeStop = 0;
+
+	int64_t  m_deltaTimeNs;
+	int64_t  m_deltaTimeAvgNs;
+	int64_t  m_numFrames;
+
+	bgfx::ProgramHandle m_program;
+    bgfx::ProgramHandle m_fullscreen;
+	bgfx::VertexBufferHandle m_vbh;
+	bgfx::IndexBufferHandle  m_ibh;
+    bgfx::UniformHandle s_texColor;
+
+    bgfx::TextureHandle debug_coverage;
+};
+
+} // namespace
+
+ENTRY_IMPLEMENT_MAIN(
+	  ExampleOcclusionCulling
+	, "occlusion-cullsing"
+	, "Occlusion culling demo"
+	, "no link for now"
+	);
