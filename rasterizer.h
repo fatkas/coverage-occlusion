@@ -13,21 +13,26 @@ struct _MM_ALIGN16 Rasterizer
 	static const int g_total_width = g_width * Tile::g_tile_width;
 	static const int g_total_height = Tile::g_tile_height;
 
-	Tile			m_tiles[ g_width ];
-	Matrix			m_transform;
+    stl::vector<Tile>       m_tiles;
+	Matrix			        m_transform;
+    stl::vector<Triangle>   m_triangles;
+    stl::vector<uint64_t>   m_sort;
 
-	static vec4_t	g_one;
-	static vec4_t	g_tile_bounds;
-	static vec4_t	g_fixed_point_factor;
-	static vec4_t	g_total_width_v;
-	static vec4_t	g_total_height_v;
+    uint32_t                m_triangles_total = 0;
+    uint32_t                m_triangles_occluder_total = 0;
+    uint32_t                m_triangles_occludee_total = 0;
+    uint32_t                m_triangles_drawn_total = 0;
+    uint32_t                m_triangles_drawn_occluder_total = 0;
+    uint32_t                m_triangles_drawn_occludee_total = 0;
+    uint32_t                m_triangles_skipped = 0;
 
 	Rasterizer( const Matrix& m ) : m_transform( m )
 	{
-		Tile::g_current_triangle = 0;
-		Tile::g_current_triangle_index = 0;
-		for ( int x = 0; x < g_width; ++x )
-			m_tiles[x].m_x = x;
+        for (int i = 0; i < g_width; ++i)
+            m_tiles.push_back(Tile(this, i));
+
+        m_triangles.reserve(128*1024);
+        m_sort.reserve(128*1024);
 	}
 
 	inline void ExtractMatrix( const Matrix& m, vec4_t* matrix )
@@ -47,24 +52,19 @@ struct _MM_ALIGN16 Rasterizer
 	template < bool select_tiles, bool use_indices > inline void push_triangle_batched( int* flag, float* z, const vec2_t* src, int count, const unsigned short* indices, int* bounds_array )
 	{
 		assert( ( (count / 3) & 3 ) == 0 );
-		int local_index = 0, total_triangle_count = ( count / 3 ) >> 2;
-		Triangle* tris = Tile::allocate_triangles( total_triangle_count, local_index );
 
-		Tile::CachedTriangleBin* triangle_indices[ g_width ], * triangle_indices_test[ g_width ];
-		_MM_ALIGN16 int transformed_bounds[ 4 ], *triangles[ g_width ], *triangles_test[ g_width ];
-		for ( int x = bounds_array[0]; x < bounds_array[2]; ++x )
-		{
-			triangle_indices[ x ] = m_tiles[ x ].allocate_bin( 0, z[1], total_triangle_count );
-			triangles[ x ] = triangle_indices[ x ]->m_triangles;
+		_MM_ALIGN16 int transformed_bounds[ 4 ];
 
-			triangle_indices_test[ x ] = m_tiles[ x ].allocate_bin( flag, z[0], total_triangle_count );
-			triangles_test[ x ] = triangle_indices_test[ x ]->m_triangles;
-		}
-
-		const vec4_t local_fixed_point = g_fixed_point_factor, local_tile_size = Tile::g_tile_size, local_tile_bound = g_tile_bounds, local_almost_one = Tile::g_almost_one;
+		const vec4_t local_fixed_point = Vector4(65536.f);
 		for ( int i = 0; i < count; i += 12 )
 		{
-			Triangle& t = *tris;
+            Triangle t;
+
+            t.flag = flag;
+
+            float zz = flag ? z[0] : z[1];
+            assert(zz >= 0.f && zz <= 65535.f);
+            t.z = int(zz*256.f);
 
 			#define IDX(num)( use_indices ? indices[ i + num ] : i + num )
             vec4_t v0_0 = VecLoadU( src + IDX(0) );
@@ -100,11 +100,15 @@ struct _MM_ALIGN16 Rasterizer
 			if ( t.mask == 0 )
 				continue;
 
+            uint64_t index = m_triangles.size();
+            m_triangles.push_back(t);
+
 			if ( select_tiles )
 			{			
                 vec4_t min_bound = _mm_min_ps( _mm_min_ps( _mm_min_ps( _mm_min_ps( v0_0, v1_0 ), v2_0 ), _mm_min_ps( _mm_min_ps( v0_1, v1_1 ), v2_1 ) ), _mm_min_ps( _mm_min_ps( _mm_min_ps( v0_2, v1_2 ), v2_2 ), _mm_min_ps( _mm_min_ps( v0_3, v1_3 ), v2_3 ) ) );
                 vec4_t max_bound = _mm_max_ps( _mm_max_ps( _mm_max_ps( _mm_max_ps( v0_0, v1_0 ), v2_0 ), _mm_max_ps( _mm_max_ps( v0_1, v1_1 ), v2_1 ) ), _mm_max_ps( _mm_max_ps( _mm_max_ps( v0_2, v1_2 ), v2_2 ), _mm_max_ps( _mm_max_ps( v0_3, v1_3 ), v2_3 ) ) );
-                vec4_t tile_bound = _mm_max_ps( _mm_min_ps( _mm_add_ps( _mm_mul_ps( _mm_movelh_ps( min_bound, max_bound ), local_tile_size ), local_almost_one ), local_tile_bound ), _mm_setzero_ps() );
+
+                vec4_t tile_bound = get_tile_bounds(min_bound, max_bound);
 				VecIntStore( transformed_bounds, VecFloat2Int( tile_bound ) );
 				assert( transformed_bounds[0] >= bounds_array[0] );
 				assert( transformed_bounds[1] >= bounds_array[1] );
@@ -112,32 +116,21 @@ struct _MM_ALIGN16 Rasterizer
 				assert( transformed_bounds[3] <= bounds_array[3] );
 
 				for ( int x = transformed_bounds[0]; x < transformed_bounds[2]; ++x )
-				{
-					*triangles[x]++ = local_index;
-					*triangles_test[x]++ = local_index;
-				}
+                    m_tiles[x].m_triangles.push_back((index<<32)|t.z);
 			}
 			else
 			{
                 assert(bounds_array[0] < g_width);
-				*triangles[ bounds_array[0] ]++ = local_index;
-				*triangles_test[ bounds_array[0] ]++ = local_index;
+                m_tiles[bounds_array[0]].m_triangles.push_back((index<<32)|t.z);
 			}
-
-			++tris;
-			++local_index;
-		}		
-
-		for ( int x = bounds_array[0]; x < bounds_array[2]; ++x )
-		{
-			triangle_indices[ x ]->m_count = int(triangles[ x ] - triangle_indices[ x ]->m_triangles);
-			triangle_indices_test[ x ]->m_count = int(triangles_test[ x ] - triangle_indices_test[ x ]->m_triangles);
-			assert( triangle_indices[ x ]->m_count <= total_triangle_count && triangle_indices[ x ]->m_count >=0  );
 		}
 	}
 
 	bool occlude_object( const __m128* m, const __m128& v_min, const __m128& v_max, int* bounds_array, float* z )
 	{
+        vec4_t g_total_width_v = Vector4(g_total_width);
+        vec4_t g_total_height_v = Vector4(g_total_height);
+
 		#define INTERSECT_EDGE(a,b,c) _mm_add_ps( b, _mm_mul_ps( _mm_sub_ps( a, b ), t ) )
         vec4_t pt[ 4 ];
         vec4_t vTmp = _mm_unpacklo_ps( v_min, v_max );				// x, X, y, Y
@@ -173,7 +166,7 @@ struct _MM_ALIGN16 Rasterizer
 		max_w = _mm_max_ps( max_w, VecShuffle( max_w, max_w, VecShuffleMask( 1, 1, 1, 1 ) ) );
 		_mm_store_ps( z, _mm_unpacklo_ps( min_w, max_w ) );
 
-		bool intersect_near = mask != 15 ? _mm_movemask_ps( _mm_and_ps( _mm_cmpgt_ps( zzzz0, _mm_setzero_ps() ), _mm_cmpgt_ps( zzzz1, _mm_setzero_ps() ) ) ) != 15 : false;
+		bool intersect_near = _mm_movemask_ps( _mm_and_ps( _mm_cmpgt_ps( zzzz0, _mm_setzero_ps() ), _mm_cmpgt_ps( zzzz1, _mm_setzero_ps() ) ) ) != 15;
 
         vec4_t x_min, x_max, y_min, y_max;
 		if ( intersect_near == false )
@@ -239,7 +232,7 @@ struct _MM_ALIGN16 Rasterizer
         vec4_t max_1 = _mm_max_ps( VecShuffle( max_0, max_0, VecShuffleMask( 0, 2, 0, 0 ) ), VecShuffle( max_0, max_0, VecShuffleMask( 1, 3, 0, 0 ) ) );
 
 		VecIntStore( bounds_array, VecFloat2Int( get_tile_bounds( min_1, max_1 ) ) );
-		return mask == 15;
+		return mask == 15 && intersect_near == false;
 
 		#undef INTERSECT_EDGE
 	}
@@ -248,19 +241,29 @@ struct _MM_ALIGN16 Rasterizer
 	{
 		_MM_ALIGN16 int bounds_array[4];
         vec4_t matrix[ 16 ];
-		ExtractMatrix( m * m_transform, matrix );
+		ExtractMatrix(m * m_transform, matrix);
+
+        m_triangles_total += index_count / 3;
+        if (flag)
+        {
+            *flag = 0;
+            m_triangles_occluder_total += index_count / 3;
+        }
+        else
+            m_triangles_occludee_total += index_count / 3;
 
 		_MM_ALIGN16 float z[4];
-		bool inside = occlude_object( matrix, v_min, v_max, bounds_array, z );
+		bool inside = occlude_object(matrix, v_min, v_max, bounds_array, z);
 		if ( bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3] )
-			return;
+            return;
 
 		if ( inside )
 		{
-			_MM_ALIGN16 vec2_t transformed_vertices[ 16384 ];
+            constexpr uint32_t max_triangles_in_object = 1024;
+			_MM_ALIGN16 vec2_t transformed_vertices[ max_triangles_in_object ];
 
 			int aligned_count = ( vertex_count + 3 ) & ~3;
-			assert( aligned_count < 16384 );
+			assert( aligned_count < max_triangles_in_object );
 			for ( int i = 0; i < aligned_count; i += 4 )
 				Vector3TransformCoord4( matrix, vertices + i, transformed_vertices + i );
 
@@ -280,11 +283,12 @@ struct _MM_ALIGN16 Rasterizer
 
 	template < bool select_tiles > void push_object_clipped( const vec4_t* matrix, float* z, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* bounds_array, int* flag )
 	{
-		_MM_ALIGN16 vec4_t transformed_vertices[ 16384 ];
-		_MM_ALIGN16 vec2_t clipped_triangles[ 16384*3 ];
+        constexpr uint32_t max_triangles_in_object = 1024;
+		_MM_ALIGN16 vec4_t transformed_vertices[ max_triangles_in_object ];
+		_MM_ALIGN16 vec2_t clipped_triangles[ max_triangles_in_object*3 ];
 
 		int aligned_count = ( vertex_count + 3 ) & ~3;
-		assert( aligned_count < 16384 );
+		assert( aligned_count < max_triangles_in_object );
 		for ( int i = 0; i < aligned_count; i += 4 )
 			Vector3TransformCoord4Homogeneous( matrix, vertices + i, transformed_vertices + i );
 
@@ -315,7 +319,7 @@ struct _MM_ALIGN16 Rasterizer
 
 			clipped_triangle_count += clip_triangle( v, clipped_triangles + clipped_triangle_count * 3 );
 		}
-		assert( clipped_triangle_count < 16384 );
+		assert( clipped_triangle_count < max_triangles_in_object );
 
 		int tris_to_pad = ( ( clipped_triangle_count + 3 ) & ~3 ) - clipped_triangle_count;
 		vec2_t& v0 = clipped_triangles[ clipped_triangle_count * 3 - 3 ];
@@ -394,6 +398,9 @@ struct _MM_ALIGN16 Rasterizer
 
 	__forceinline int clip_triangle( __m128* v, vec2_t* dst )
 	{
+        vec4_t g_total_width_v = Vector4(g_total_width);
+        vec4_t g_total_height_v = Vector4(g_total_height);
+
 		#define PROJECT(v0, v1) _mm_div_ps( _mm_movelh_ps( v0, v1 ), ( VecShuffle( v0, v1, VecShuffleMask( 3, 3, 3, 3 ) ) ) )
 		int count = 4;
         vec4_t input_array[ 196 ], output_array[ 196 ];
@@ -417,29 +424,29 @@ struct _MM_ALIGN16 Rasterizer
 
 	__forceinline vec4_t get_tile_bounds( vec4_t v_min, vec4_t v_max )
 	{
+        vec4_t tile_size = Vector4(1.f / (float)Tile::g_tile_width, 1.f / (float)Tile::g_tile_height, 1.f / (float)Tile::g_tile_width, 1.f / (float)Tile::g_tile_height);
+        vec4_t almost_one = Vector4(0.f, 0.f, 0.9999f, 0.9999f);
+        vec4_t g_tile_bounds = Vector4((float)Rasterizer::g_width, 1.f, (float)Rasterizer::g_width, 1.f);
+
         vec4_t minmax = _mm_movelh_ps( v_min, v_max ); // xyXY
-        vec4_t tile_bounds = _mm_mul_ps( minmax, Tile::g_tile_size ); // x/w y/h X/w Y/h
-		tile_bounds = _mm_add_ps( tile_bounds, Tile::g_almost_one );
+        vec4_t tile_bounds = _mm_mul_ps( minmax, tile_size ); // x/w y/h X/w Y/h
+		tile_bounds = _mm_add_ps( tile_bounds, almost_one );
 		return _mm_max_ps( _mm_min_ps( tile_bounds, g_tile_bounds ), _mm_setzero_ps() );
 	}
 
-    Tile::CachedTriangleBin* sort_triangles(int tile, int& triangle_count)
+    void sort_triangles(int tile)
     {
-        return m_tiles[tile].sort(triangle_count);
+        m_tiles[tile].sort_triangles();
     }
 
-    void draw_triangles(int tile, Tile::CachedTriangleBin* triangles, int triangle_count)
+    void draw_triangles(int tile)
     {
-        m_tiles[tile].draw_triangles(triangles, triangle_count);
+        m_tiles[tile].draw_triangles();
+        m_triangles_drawn_total += m_tiles[tile].m_triangles_drawn_total;
+        m_triangles_drawn_occluder_total += m_tiles[tile].m_triangles_drawn_occluder_total;
+        m_triangles_drawn_occludee_total += m_tiles[tile].m_triangles_drawn_occludee_total;
+        m_triangles_skipped += m_tiles[tile].m_triangles_skipped;
     }
-
-	void draw_triangles()
-	{
-		for ( int x = 0; x < g_width; ++x )			
-			m_tiles[x].draw_triangles();
-	}
-
-	int Present() const;
-
+    
 	static void Init();
 };

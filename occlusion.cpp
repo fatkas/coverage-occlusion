@@ -56,6 +56,24 @@ struct PosColorVertex
 	static bgfx::VertexLayout ms_layout;
 };
 
+struct PosVertex
+{
+    float m_x;
+    float m_y;
+    float m_z;
+
+    static void init()
+    {
+        ms_layout
+            .begin()
+            .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
+            .end();
+    }
+
+    static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout PosVertex::ms_layout;
 bgfx::VertexLayout PosColorVertex::ms_layout;
 
 static PosColorVertex s_cubeVertices[8] =
@@ -108,25 +126,6 @@ static const float s_mod[6][3] =
 	{ 0.0f, 1.0f, 1.0f },
 };
 
-struct PosVertex
-{
-    float m_x;
-    float m_y;
-    float m_z;
-
-    static void init()
-    {
-        ms_layout
-            .begin()
-            .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
-            .end();
-    }
-
-    static bgfx::VertexLayout ms_layout;
-};
-
-bgfx::VertexLayout PosVertex::ms_layout;
-
 static void screenSpaceQuad(bgfx::Encoder* encoder)
 {
     if (3 == bgfx::getAvailTransientVertexBuffer(3, PosVertex::ms_layout) )
@@ -173,7 +172,7 @@ public:
 		m_scrollArea = 0;
 		m_dim        = 32;
 		m_maxDim     = 40;
-		m_transform  = 0;
+		m_transform  = 1;
 
 		m_timeOffset = bx::getHPCounter();
 
@@ -207,6 +206,7 @@ public:
 
 		// Create vertex stream declaration.
 		PosColorVertex::init();
+        PosVertex::init();
 
 		bgfx::RendererType::Enum type = bgfx::getRendererType();
 
@@ -232,8 +232,6 @@ public:
 
 		// Create static index buffer.
 		m_ibh = bgfx::createIndexBuffer(bgfx::makeRef(s_cubeIndices, sizeof(s_cubeIndices) ) );
-
-        PosVertex::init();
 
 		// Imgui.
 		imguiCreate();
@@ -285,15 +283,15 @@ public:
                                   | (m_Wireframe ? BGFX_STATE_PT_LINES | BGFX_STATE_LINEAA | BGFX_STATE_BLEND_ALPHA : 0)
                                   );
                 encoder->submit(0, m_program);
-
-                if (m_ShowCoverage && m_Occlusion)
-                {
-                    encoder->setTexture(0, s_texColor, debug_coverage);
-                    encoder->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-                    screenSpaceQuad(encoder);
-                    encoder->submit(0, m_fullscreen);
-                }
 			}
+
+            if (m_ShowCoverage && m_Occlusion)
+            {
+                encoder->setTexture(0, s_texColor, debug_coverage);
+                encoder->setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+                screenSpaceQuad(encoder);
+                encoder->submit(0, m_fullscreen);
+            }
 
 			bgfx::end(encoder);
 		}
@@ -332,7 +330,7 @@ public:
 				, ImGuiCond_FirstUseEver
 				);
 			ImGui::SetNextWindowSize(
-				  ImVec2((float)m_width / 4.0f, (float)2.0f * m_height / 3.0f)
+				  ImVec2((float)m_width / 4.0f, m_height - 20.f)
 				, ImGuiCond_FirstUseEver
 				);
 			ImGui::Begin("Settings"
@@ -366,6 +364,14 @@ public:
             ImGui::Text("occlusion draw %0.6f [ms]", double(occlusion_draw_time)*1000.0/hpFreq);
 			ImGui::Text("Waiting for render thread %0.6f [ms]", double(stats->waitRender) * toMs);
 			ImGui::Text("Waiting for submit thread %0.6f [ms]", double(stats->waitSubmit) * toMs);
+
+            ImGui::Text("total triangles %d", m_triangles_total);
+            ImGui::Text("total occluder triangles %d", m_triangles_occluder_total);
+            ImGui::Text("total occludee triangles %d", m_triangles_occludee_total);
+            ImGui::Text("total drawn triangles %d", m_triangles_drawn_total);
+            ImGui::Text("total drawn occluder triangles %d", m_triangles_drawn_occluder_total);
+            ImGui::Text("total drawn occludee triangles %d", m_triangles_drawn_occludee_total);
+            ImGui::Text("total skipped triangles %d", m_triangles_skipped);
 
 			ImGui::End();
 
@@ -460,6 +466,11 @@ public:
                                      s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
                                      s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
                                      &m_Visibility[i]);
+                    rast.push_object(MatrixSet(m_Transforms[i].data()),
+                                     box_min, box_max,
+                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
+                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
+                                     nullptr);
                 }
                 int64_t occlusion_mid = bx::getHPCounter();
                 occlusion_push_time = occlusion_mid - occlusion_start;
@@ -467,16 +478,23 @@ public:
                 occlusion_sort_time = occlusion_draw_time = 0;
                 for (int i = 0; i < Rasterizer::g_width; ++i)
                 {
-                    int tri_count = 0;
                     occlusion_start = bx::getHPCounter();
-                    auto tris = rast.sort_triangles(i, tri_count);
+                    rast.sort_triangles(i);
                     occlusion_mid = bx::getHPCounter();
-                    rast.draw_triangles(i, tris, tri_count);
+                    rast.draw_triangles(i);
                     int64_t occlusion_end = bx::getHPCounter();
 
                     occlusion_sort_time += occlusion_mid - occlusion_start;
                     occlusion_draw_time += occlusion_end - occlusion_mid;
                 }
+
+                m_triangles_total = rast.m_triangles_total;
+                m_triangles_occluder_total = rast.m_triangles_occluder_total;
+                m_triangles_occludee_total = rast.m_triangles_occludee_total;
+                m_triangles_drawn_total = rast.m_triangles_drawn_total;
+                m_triangles_drawn_occluder_total = rast.m_triangles_drawn_occluder_total;
+                m_triangles_drawn_occludee_total = rast.m_triangles_drawn_occludee_total;
+                m_triangles_skipped = rast.m_triangles_skipped;
 
                 if (m_ShowCoverage)
                 {
@@ -501,6 +519,13 @@ public:
                 occlusion_push_time = occlusion_sort_time = occlusion_draw_time = 0;
                 for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i )
                     m_Visibility[i] = 1;
+                m_triangles_total = 0;
+                m_triangles_occluder_total = 0;
+                m_triangles_occludee_total = 0;
+                m_triangles_drawn_total = 0;
+                m_triangles_drawn_occluder_total = 0;
+                m_triangles_drawn_occludee_total = 0;
+                m_triangles_skipped = 0;
             }
 
 			submit();
@@ -546,6 +571,14 @@ public:
 	int64_t  m_deltaTimeNs;
 	int64_t  m_deltaTimeAvgNs;
 	int64_t  m_numFrames;
+
+    uint32_t                m_triangles_total = 0;
+    uint32_t                m_triangles_occluder_total = 0;
+    uint32_t                m_triangles_occludee_total = 0;
+    uint32_t                m_triangles_drawn_total = 0;
+    uint32_t                m_triangles_drawn_occluder_total = 0;
+    uint32_t                m_triangles_drawn_occludee_total = 0;
+    uint32_t                m_triangles_skipped = 0;
 
 	bgfx::ProgramHandle m_program;
     bgfx::ProgramHandle m_fullscreen;
