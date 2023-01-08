@@ -376,13 +376,14 @@ public:
             ImGui::Text("total drawn occluder triangles %d", m_Rasterizer.m_triangles_drawn_occluder_total);
             ImGui::Text("total drawn occludee triangles %d", m_Rasterizer.m_triangles_drawn_occludee_total);
             ImGui::Text("total skipped triangles %d", m_Rasterizer.m_triangles_skipped);
+            ImGui::Text("total offscreen triangles %d", m_Rasterizer.m_triangles_offscreen);
 
             const auto& tiles = m_Rasterizer.get_tiles();
             if (ImGui::TreeNode("Tiles", "Tiles (%d)", (uint32_t)tiles.size()))
             {
                 for (auto & t : tiles)
                 {
-                    if (ImGui::TreeNode(std::to_string(t.m_x + t.m_y*Rasterizer::g_width).c_str(), "Tile %d (%d/%d) %s", t.m_x, (uint32_t)t.m_triangles.size(), t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
+                    if (ImGui::TreeNode(std::to_string(t.m_x + t.m_y*Rasterizer::g_width).c_str(), "Tile %d (%d/%d) %s", t.m_x, (uint32_t)t.m_triangle_count, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
                     {
                         ImGui::Text("total sorted triangles %d", (uint32_t)t.m_triangles.size());
                         ImGui::Text("total drawn triangles %d", t.m_triangles_drawn_total);

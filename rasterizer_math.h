@@ -16,6 +16,20 @@ struct vec2_t
 	};	
 };
 
+struct vec3_t
+{
+    union
+    {
+        struct
+        {
+            float x;
+            float y;
+            float z;
+        };
+        float v[3];
+    };
+};
+
 #define USE_SSE 1
 
 #if USE_SSE
@@ -48,6 +62,7 @@ inline vec4_t Vector4( float a )
 #define VecMad(a,b,c) _mm_add_ps(c,_mm_mul_ps(a,b))
 #define VecMul(a,b) _mm_mul_ps(a,b)
 #define VecDiv(a,b) _mm_div_ps(a,b)
+#define VecRcp(a) _mm_rcp_ps(a)
 #define VecAdd(a,b) _mm_add_ps(a,b)
 #define VecSub(a,b) _mm_sub_ps(a,b)
 #define VecMax(a,b) _mm_max_ps(a,b)

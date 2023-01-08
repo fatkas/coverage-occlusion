@@ -26,5 +26,5 @@ Tile::Tile(int x, int y)
     for (int i = 0; i < 128; ++i )
         m_shifts[x*128 + i] = _mm_set_epi32( Shift(i), Shift(i - 32), Shift(i - 64), Shift(i - 96) );
 
-    m_triangles.reserve(128*1024);
+    m_triangles.resize(g_max_triangles);
 }

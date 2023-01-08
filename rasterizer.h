@@ -11,16 +11,19 @@
 
 struct _MM_ALIGN16 Rasterizer
 {
-	static const int g_width = 6;
-    static const int g_height = 12;
-	static const int g_total_width = g_width * Tile::g_tile_width;
-	static const int g_total_height = g_height * Tile::g_tile_height;
+	static constexpr int g_width = 6;
+    static constexpr int g_height = 12;
+	static constexpr int g_total_width = g_width * Tile::g_tile_width;
+	static constexpr int g_total_height = g_height * Tile::g_tile_height;
+
+    static constexpr int g_max_4triangles = 512 * 1024;
 
 private:
 
     stl::vector<Tile>       m_tiles;
 	Matrix			        m_transform;
     stl::vector<Triangle>   m_triangles;
+    uint32_t                m_triangle_count = 0;
     stl::vector<uint64_t>   m_sort;
     __m128i                 m_full_span;
 
@@ -42,11 +45,23 @@ private:
 		#undef EXTRACT
 	}
 
-	template < bool select_tiles, bool use_indices > inline void push_triangle_batched(int* flag, float* z, const vec2_t* src, int count, const unsigned short* indices, int* bounds_array)
+    inline void sort( __m128 &A0, __m128 &A1, __m128 &B0, __m128 &B1 )
+    {
+        __m128 mask = _mm_cmple_ps( B0, B1 );
+        __m128 sx = _mm_add_ps( A0, A1 );
+        A0 = _mm_or_ps( _mm_and_ps( mask, A0 ), _mm_andnot_ps( mask, A1 ) );
+        A1 = _mm_sub_ps( sx, A0 );
+
+        __m128 sy = _mm_add_ps( B0, B1 );
+        B0 = _mm_or_ps( _mm_and_ps( mask, B0 ), _mm_andnot_ps( mask, B1 ) );
+        B1 = _mm_sub_ps(sy, B0);
+    }
+
+	template < bool select_tiles, bool use_indices > inline void push_triangle_batched(int* flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array)
 	{
 		assert(( (count / 3) & 3 ) == 0);
 
-		_MM_ALIGN16 int transformed_bounds[ 4 ];
+		_MM_ALIGN16 int transformed_bounds[4];
 
 		const vec4_t local_fixed_point = Vector4(65536.f);
 		for ( int i = 0; i < count; i += 12 )
@@ -55,54 +70,92 @@ private:
 
             t.flag = flag;
 
-            float zz = flag ? z[0] : z[1];
-            assert(zz >= 0.f && zz <= 65535.f);
-            t.z = int(zz*256.f);
-
 			#define IDX(num)( use_indices ? indices[ i + num ] : i + num )
-            vec4_t v0_0 = VecLoadU( src + IDX(0) );
-            vec4_t v0_1 = VecLoadU( src + IDX(3) );
-            vec4_t v0_2 = VecLoadU( src + IDX(6) );
-            vec4_t v0_3 = VecLoadU( src + IDX(9) );
-            vec4_t tmp0 = _mm_unpacklo_ps( v0_0, v0_1 ); // x0_0 x1_0 y0_0 y1_0
-            vec4_t tmp1 = _mm_unpacklo_ps( v0_2, v0_3 ); // x2_0 x3_0 y2_0 y3_0
-			t.x0 = _mm_mul_ps( _mm_movelh_ps( tmp0, tmp1 ), local_fixed_point );
-			t.y0 = _mm_movehl_ps( tmp1, tmp0 );
+            vec4_t v0_0 = src[IDX(0)];
+            vec4_t v0_1 = src[IDX(3)];
+            vec4_t v0_2 = src[IDX(6)];
+            vec4_t v0_3 = src[IDX(9)];
+            vec4_t tmp0 = _mm_unpacklo_ps(v0_0, v0_1); // x0_0 x1_0 y0_0 y1_0
+            vec4_t tmp1 = _mm_unpacklo_ps(v0_2, v0_3); // x2_0 x3_0 y2_0 y3_0
+            vec4_t tmp0_0 = _mm_unpackhi_ps(v0_0, v0_1); // z0_0 z1_0 w0_0 w1_0
+            vec4_t tmp1_0 = _mm_unpackhi_ps(v0_2, v0_3); // z2_0 z3_0 w2_0 w3_0
+            vec4_t w0 = _mm_movehl_ps(tmp1_0, tmp0_0); // w0_0 w1_0 w2_0 w3_0
+            vec4_t x0 = VecMul(_mm_movelh_ps(tmp0, tmp1), VecRcp(w0));
+			t.x0 = _mm_mul_ps(x0, local_fixed_point);
+			t.y0 = VecMul(_mm_movehl_ps(tmp1, tmp0), VecRcp(w0));
 			
-            vec4_t v1_0 = VecLoadU( src + IDX(1) );
-            vec4_t v1_1 = VecLoadU( src + IDX(4) );
-            vec4_t v1_2 = VecLoadU( src + IDX(7) );
-            vec4_t v1_3 = VecLoadU( src + IDX(10) );
+            vec4_t v1_0 = src[IDX(1)];
+            vec4_t v1_1 = src[IDX(4)];
+            vec4_t v1_2 = src[IDX(7)];
+            vec4_t v1_3 = src[IDX(10)];
             vec4_t tmp2 = _mm_unpacklo_ps( v1_0, v1_1 ); // x0_1 x1_1 y0_1 y1_1
             vec4_t tmp3 = _mm_unpacklo_ps( v1_2, v1_3 ); // x2_1 x3_1 y2_1 y3_1
-			t.x1 = _mm_mul_ps( _mm_movelh_ps( tmp2, tmp3 ), local_fixed_point );
-			t.y1 = _mm_movehl_ps( tmp3, tmp2 );
+            vec4_t tmp2_0 = _mm_unpackhi_ps(v1_0, v1_1);
+            vec4_t tmp3_0 = _mm_unpackhi_ps(v1_2, v1_3);
+            vec4_t w1 = _mm_movehl_ps(tmp3_0, tmp2_0); // w0_1 w1_1 w2_1 w3_1
+            vec4_t x1 = VecMul(_mm_movelh_ps(tmp2, tmp3), VecRcp(w1));
+			t.x1 = _mm_mul_ps(x1, local_fixed_point);
+			t.y1 = VecMul(_mm_movehl_ps(tmp3, tmp2), VecRcp(w1));
 
-            vec4_t v2_0 = VecLoadU( src + IDX(2) );
-            vec4_t v2_1 = VecLoadU( src + IDX(5) );
-            vec4_t v2_2 = VecLoadU( src + IDX(8) );
-            vec4_t v2_3 = VecLoadU( src + IDX(11) );
-            vec4_t tmp4 = _mm_unpacklo_ps( v2_0, v2_1 ); // x0_2 x1_2 y0_2 y1_2
-            vec4_t tmp5 = _mm_unpacklo_ps( v2_2, v2_3 ); // x2_2 x3_2 y2_2 y3_2
-			t.x2 = _mm_mul_ps( _mm_movelh_ps( tmp4, tmp5 ), local_fixed_point );
-			t.y2 = _mm_movehl_ps( tmp5, tmp4 );
+            vec4_t v2_0 = src[IDX(2)];
+            vec4_t v2_1 = src[IDX(5)];
+            vec4_t v2_2 = src[IDX(8)];
+            vec4_t v2_3 = src[IDX(11)];
+            vec4_t tmp4 = _mm_unpacklo_ps(v2_0, v2_1); // x0_2 x1_2 y0_2 y1_2
+            vec4_t tmp5 = _mm_unpacklo_ps(v2_2, v2_3); // x2_2 x3_2 y2_2 y3_2
+            vec4_t tmp4_0 = _mm_unpackhi_ps(v2_0, v2_1);
+            vec4_t tmp5_0 = _mm_unpackhi_ps(v2_2, v2_3);
+            vec4_t w2 = _mm_movehl_ps(tmp5_0, tmp4_0); // w0_2 w1_2 w2_2 w3_2
+            vec4_t x2 = VecMul(_mm_movelh_ps(tmp4, tmp5), VecRcp(w2));
+			t.x2 = _mm_mul_ps(x2, local_fixed_point);
+			t.y2 = VecMul(_mm_movehl_ps(tmp5, tmp4), VecRcp(w2));
 			#undef IDX			
 	
-			t.mask = _mm_movemask_ps( _mm_cmplt_ps( _mm_sub_ps( _mm_mul_ps( _mm_sub_ps( t.x1, t.x0 ), _mm_sub_ps( t.y2, t.y0 ) ), _mm_mul_ps( _mm_sub_ps( t.x2, t.x0 ), _mm_sub_ps( t.y1, t.y0 ) ) ), _mm_setzero_ps() ) );
+			t.mask = _mm_movemask_ps(_mm_cmplt_ps(_mm_sub_ps(_mm_mul_ps(_mm_sub_ps(t.x1, t.x0), _mm_sub_ps(t.y2, t.y0)), _mm_mul_ps(_mm_sub_ps(t.x2, t.x0), _mm_sub_ps(t.y1, t.y0))), _mm_setzero_ps()));
 
 			if ( t.mask == 0 )
 				continue;
 
-            uint64_t index = m_triangles.size();
-            m_triangles.push_back(t);
+            assert(m_triangle_count < g_max_4triangles);
+
+            _MM_ALIGN16 int zz[4];
+            if (flag)
+            {
+                vec4_t w = VecMul(VecMin(w0, VecMin(w1, w2)), Vector4(256.0f));
+                vec4_t ww = VecMin(VecShuffle(w, w, VecShuffleMask(0, 1, 0, 1)), VecShuffle(w, w, VecShuffleMask(2, 3, 2, 3)));
+                VecIntStore(zz, VecFloat2Int(VecMin(VecShuffle(ww, ww, VecShuffleMask(0, 0, 0, 0)), VecShuffle(w, w, VecShuffleMask(1, 1, 1, 1)))));
+            }
+            else
+            {
+                vec4_t w = VecMul(VecMax(w0, VecMax(w1, w2)), Vector4(256.0f));
+                vec4_t ww = VecMax(VecShuffle(w, w, VecShuffleMask(0, 1, 0, 1)), VecShuffle(w, w, VecShuffleMask(2, 3, 2, 3)));
+                VecIntStore(zz, VecFloat2Int(VecMax(VecShuffle(ww, ww, VecShuffleMask(0, 0, 0, 0)), VecShuffle(w, w, VecShuffleMask(1, 1, 1, 1)))));
+            }
+            assert(zz[0] >= 0 && zz[0] <= 65535*256);
+            t.z = zz[0];
+
+            sort(t.x0, t.x1, t.y0, t.y1);
+            sort(t.x1, t.x2, t.y1, t.y2);
+            sort(t.x0, t.x1, t.y0, t.y1);
+
+            uint64_t index = m_triangle_count;
+            m_triangles[m_triangle_count++] = t;
 
 			if ( select_tiles )
-			{			
-                vec4_t min_bound = _mm_min_ps( _mm_min_ps( _mm_min_ps( _mm_min_ps( v0_0, v1_0 ), v2_0 ), _mm_min_ps( _mm_min_ps( v0_1, v1_1 ), v2_1 ) ), _mm_min_ps( _mm_min_ps( _mm_min_ps( v0_2, v1_2 ), v2_2 ), _mm_min_ps( _mm_min_ps( v0_3, v1_3 ), v2_3 ) ) );
-                vec4_t max_bound = _mm_max_ps( _mm_max_ps( _mm_max_ps( _mm_max_ps( v0_0, v1_0 ), v2_0 ), _mm_max_ps( _mm_max_ps( v0_1, v1_1 ), v2_1 ) ), _mm_max_ps( _mm_max_ps( _mm_max_ps( v0_2, v1_2 ), v2_2 ), _mm_max_ps( _mm_max_ps( v0_3, v1_3 ), v2_3 ) ) );
+			{
+                vec4_t x_min = VecMin(x0, VecMin(x1, x2));
+                vec4_t x_max = VecMax(x0, VecMax(x1, x2));
+                vec4_t y_min = VecMin(t.y0, VecMin(t.y1, t.y2));
+                vec4_t y_max = VecMax(t.y0, VecMax(t.y1, t.y2));
 
-                vec4_t tile_bound = get_tile_bounds(min_bound, max_bound);
-				VecIntStore( transformed_bounds, VecFloat2Int( tile_bound ) );
+                vec4_t min_0 = VecMin(VecShuffle(x_min, y_min, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_min, y_min, VecShuffleMask(2, 3, 2, 3)));
+                vec4_t max_0 = VecMax(VecShuffle(x_max, y_max, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_max, y_max, VecShuffleMask(2, 3, 2, 3)));
+
+                vec4_t min_1 = VecMin(VecShuffle(min_0, min_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(min_0, min_0, VecShuffleMask(1, 3, 0, 0)));
+                vec4_t max_1 = VecMax(VecShuffle(max_0, max_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(max_0, max_0, VecShuffleMask(1, 3, 0, 0)));
+
+                vec4_t tile_bound = get_tile_bounds(min_1, max_1);
+				VecIntStore(transformed_bounds, VecFloat2Int( tile_bound ));
 				assert(transformed_bounds[0] >= bounds_array[0]);
 				assert(transformed_bounds[1] >= bounds_array[1]);
 				assert(transformed_bounds[2] <= bounds_array[2]);
@@ -113,134 +166,129 @@ private:
                     {
                         assert(x < g_width);
                         assert(y < g_height);
-                        m_tiles[x + y*g_width].m_triangles.push_back((index<<32)|t.z);
+                        auto & tt = m_tiles[x + y*g_width];
+                        assert(tt.m_triangle_count < Tile::g_max_triangles);
+                        tt.m_triangles[tt.m_triangle_count++] = (index<<32)|t.z;
                     }
 			}
 			else
 			{
                 assert(bounds_array[0] < g_width);
                 assert(bounds_array[1] < g_height);
-                m_tiles[bounds_array[0] + bounds_array[1]*g_width].m_triangles.push_back((index<<32)|t.z);
+                auto & tt = m_tiles[bounds_array[0] + bounds_array[1]*g_width];
+                assert(tt.m_triangle_count < Tile::g_max_triangles);
+                tt.m_triangles[tt.m_triangle_count++] = (index<<32)|t.z;
 			}
 		}
 	}
 
-	bool occlude_object( const __m128* m, const __m128& v_min, const __m128& v_max, int* bounds_array, float* z )
+	bool occlude_object(const __m128* m, const __m128& v_min, const __m128& v_max, int* bounds_array)
 	{
         vec4_t g_total_width_v = Vector4(g_total_width);
         vec4_t g_total_height_v = Vector4(g_total_height);
 
-		#define INTERSECT_EDGE(a,b,c) _mm_add_ps( b, _mm_mul_ps( _mm_sub_ps( a, b ), t ) )
         vec4_t pt[ 4 ];
-        vec4_t vTmp = _mm_unpacklo_ps( v_min, v_max );				// x, X, y, Y
-		pt[0] = VecShuffle( v_min, v_max, _MM_SHUFFLE( 0, 0, 0, 0 ) ); // xxXX	
-		pt[1] = VecShuffle( vTmp, vTmp, _MM_SHUFFLE( 2, 3, 2, 3 ) ); // yYyY
-		pt[2] = VecShuffle( v_min, v_min, _MM_SHUFFLE( 2, 2, 2, 2 ) ); // zzzz
-		pt[3] = VecShuffle( v_max, v_max, _MM_SHUFFLE( 2, 2, 2, 2 ) ); // ZZZZ
+        vec4_t vTmp = _mm_unpacklo_ps(v_min, v_max);				// x, X, y, Y
+		pt[0] = VecShuffle(v_min, v_max, _MM_SHUFFLE( 0, 0, 0, 0)); // xxXX
+		pt[1] = VecShuffle(vTmp, vTmp, _MM_SHUFFLE( 2, 3, 2, 3)); // yYyY
+		pt[2] = VecShuffle(v_min, v_min, _MM_SHUFFLE( 2, 2, 2, 2)); // zzzz
+		pt[3] = VecShuffle(v_max, v_max, _MM_SHUFFLE( 2, 2, 2, 2)); // ZZZZ
 
-        vec4_t xxxx0 = VecMad( m[8], pt[2], VecMad( m[4], pt[1], VecMad( m[0], pt[0], m[12] ) ) );
-        vec4_t yyyy0 = VecMad( m[9], pt[2], VecMad( m[5], pt[1], VecMad( m[1], pt[0], m[13] ) ) );
-        vec4_t zzzz0 = VecMad( m[10], pt[2], VecMad( m[6], pt[1], VecMad( m[2], pt[0], m[14] ) ) );
-        vec4_t wwww0 = VecMad( m[11], pt[2], VecMad( m[7], pt[1], VecMad( m[3], pt[0], m[15] ) ) );
+        vec4_t xxxx0 = VecMad(m[8], pt[2], VecMad(m[4], pt[1], VecMad(m[0], pt[0], m[12])));
+        vec4_t yyyy0 = VecMad(m[9], pt[2], VecMad(m[5], pt[1], VecMad(m[1], pt[0], m[13])));
+        vec4_t zzzz0 = VecMad(m[10], pt[2], VecMad(m[6], pt[1], VecMad(m[2], pt[0], m[14])));
+        vec4_t wwww0 = VecMad(m[11], pt[2], VecMad(m[7], pt[1], VecMad(m[3], pt[0], m[15])));
 
-        vec4_t xxxx1 = VecMad( m[8], pt[3], VecMad( m[4], pt[1], VecMad( m[0], pt[0], m[12] ) ) );
-        vec4_t yyyy1 = VecMad( m[9], pt[3], VecMad( m[5], pt[1], VecMad( m[1], pt[0], m[13] ) ) );
-        vec4_t zzzz1 = VecMad( m[10], pt[3], VecMad( m[6], pt[1], VecMad( m[2], pt[0], m[14] ) ) );
-        vec4_t wwww1 = VecMad( m[11], pt[3], VecMad( m[7], pt[1], VecMad( m[3], pt[0], m[15] ) ) );
+        vec4_t xxxx1 = VecMad(m[8], pt[3], VecMad(m[4], pt[1], VecMad(m[0], pt[0], m[12])));
+        vec4_t yyyy1 = VecMad(m[9], pt[3], VecMad(m[5], pt[1], VecMad(m[1], pt[0], m[13])));
+        vec4_t zzzz1 = VecMad(m[10], pt[3], VecMad(m[6], pt[1], VecMad(m[2], pt[0], m[14])));
+        vec4_t wwww1 = VecMad(m[11], pt[3], VecMad(m[7], pt[1], VecMad(m[3], pt[0], m[15])));
 
-        vec4_t v_mask00 = _mm_and_ps( _mm_cmpgt_ps( xxxx0, _mm_setzero_ps() ), _mm_cmpgt_ps( xxxx1, _mm_setzero_ps() ) );
-        vec4_t v_mask01 = _mm_and_ps( _mm_cmpgt_ps( yyyy0, _mm_setzero_ps() ), _mm_cmpgt_ps( yyyy1, _mm_setzero_ps() ) );
-        vec4_t v_mask10 = _mm_and_ps( _mm_cmplt_ps( xxxx0, _mm_mul_ps( wwww0, g_total_width_v ) ), _mm_cmplt_ps( xxxx1, _mm_mul_ps( wwww1, g_total_width_v ) ) );
-        vec4_t v_mask11 = _mm_and_ps( _mm_cmplt_ps( yyyy0, _mm_mul_ps( wwww0, g_total_height_v ) ), _mm_cmplt_ps( yyyy1, _mm_mul_ps( wwww1, g_total_height_v ) ) );
+        vec4_t v_mask00 = _mm_and_ps(_mm_cmpgt_ps(xxxx0, _mm_setzero_ps()), _mm_cmpgt_ps(xxxx1, _mm_setzero_ps()));
+        vec4_t v_mask01 = _mm_and_ps(_mm_cmpgt_ps(yyyy0, _mm_setzero_ps()), _mm_cmpgt_ps(yyyy1, _mm_setzero_ps()));
+        vec4_t v_mask10 = _mm_and_ps(_mm_cmplt_ps(xxxx0, _mm_mul_ps(wwww0, g_total_width_v)), _mm_cmplt_ps(xxxx1, _mm_mul_ps(wwww1, g_total_width_v )));
+        vec4_t v_mask11 = _mm_and_ps(_mm_cmplt_ps(yyyy0, _mm_mul_ps(wwww0, g_total_height_v)), _mm_cmplt_ps(yyyy1, _mm_mul_ps(wwww1, g_total_height_v)));
 
-        vec4_t v_mask0 = _mm_and_ps( v_mask00, v_mask10 );
-        vec4_t v_mask1 = _mm_and_ps( v_mask01, v_mask11 );
-		int mask = _mm_movemask_ps( _mm_and_ps( v_mask0, v_mask1 ) );
+        vec4_t v_mask0 = _mm_and_ps(v_mask00, v_mask10);
+        vec4_t v_mask1 = _mm_and_ps(v_mask01, v_mask11);
+		int mask = _mm_movemask_ps(_mm_and_ps(v_mask0, v_mask1));
 
-        vec4_t min_w = _mm_min_ps(wwww0, wwww1);
-        vec4_t max_w = _mm_max_ps(wwww0, wwww1);
-		min_w = _mm_min_ps( min_w, VecShuffle( min_w, min_w, VecShuffleMask( 2, 3, 2, 3 ) ) );
-		min_w = _mm_min_ps( min_w, VecShuffle( min_w, min_w, VecShuffleMask( 1, 1, 1, 1 ) ) );
-		max_w = _mm_max_ps( max_w, VecShuffle( max_w, max_w, VecShuffleMask( 2, 3, 2, 3 ) ) );		
-		max_w = _mm_max_ps( max_w, VecShuffle( max_w, max_w, VecShuffleMask( 1, 1, 1, 1 ) ) );
-		_mm_store_ps( z, _mm_unpacklo_ps( min_w, max_w ) );
-
-		bool intersect_near = _mm_movemask_ps( _mm_and_ps( _mm_cmpgt_ps( zzzz0, _mm_setzero_ps() ), _mm_cmpgt_ps( zzzz1, _mm_setzero_ps() ) ) ) != 15;
+		bool intersect_near = _mm_movemask_ps(_mm_and_ps(_mm_cmpgt_ps(zzzz0, _mm_setzero_ps()), _mm_cmpgt_ps(zzzz1, _mm_setzero_ps()))) != 15;
 
         vec4_t x_min, x_max, y_min, y_max;
-		if ( intersect_near == false )
+		if (intersect_near == false)
 		{
-            vec4_t x0 = _mm_div_ps( xxxx0, wwww0 );
-            vec4_t y0 = _mm_div_ps( yyyy0, wwww0 );
-            vec4_t x1 = _mm_div_ps( xxxx1, wwww1 );
-            vec4_t y1 = _mm_div_ps( yyyy1, wwww1 );
+            vec4_t x0 = VecMul(xxxx0, VecRcp(wwww0));
+            vec4_t y0 = VecMul(yyyy0, VecRcp(wwww0));
+            vec4_t x1 = VecMul(xxxx1, VecRcp(wwww1));
+            vec4_t y1 = VecMul(yyyy1, VecRcp(wwww1));
 
-			x_min = _mm_min_ps( x0, x1 );
-			x_max = _mm_max_ps( x0, x1 );
-			y_min = _mm_min_ps( y0, y1 );
-			y_max = _mm_max_ps( y0, y1 );
-		}
+			x_min = _mm_min_ps(x0, x1);
+			x_max = _mm_max_ps(x0, x1);
+			y_min = _mm_min_ps(y0, y1);
+			y_max = _mm_max_ps(y0, y1);
+        }
 		else
 		{
-            vec4_t xxxx0_1 = VecShuffle( xxxx0, xxxx0, VecShuffleMask( 1, 3, 0, 2 ) );
-            vec4_t yyyy0_1 = VecShuffle( yyyy0, yyyy0, VecShuffleMask( 1, 3, 0, 2 ) );
-            vec4_t zzzz0_1 = VecShuffle( zzzz0, zzzz0, VecShuffleMask( 1, 3, 0, 2 ) );
-            vec4_t wwww0_1 = VecShuffle( wwww0, wwww0, VecShuffleMask( 1, 3, 0, 2 ) );
+#define INTERSECT_EDGE(a,b,c) _mm_add_ps(b, _mm_mul_ps(_mm_sub_ps(a, b), t))
+            vec4_t xxxx0_1 = VecShuffle(xxxx0, xxxx0, VecShuffleMask(1, 3, 0, 2));
+            vec4_t yyyy0_1 = VecShuffle(yyyy0, yyyy0, VecShuffleMask(1, 3, 0, 2));
+            vec4_t zzzz0_1 = VecShuffle(zzzz0, zzzz0, VecShuffleMask(1, 3, 0, 2));
+            vec4_t wwww0_1 = VecShuffle(wwww0, wwww0, VecShuffleMask(1, 3, 0, 2));
 
-            vec4_t xxxx1_1 = VecShuffle( xxxx1, xxxx1, VecShuffleMask( 1, 3, 0, 2 ) );
-            vec4_t yyyy1_1 = VecShuffle( yyyy1, yyyy1, VecShuffleMask( 1, 3, 0, 2 ) );
-            vec4_t zzzz1_1 = VecShuffle( zzzz1, zzzz1, VecShuffleMask( 1, 3, 0, 2 ) );
-            vec4_t wwww1_1 = VecShuffle( wwww1, wwww1, VecShuffleMask( 1, 3, 0, 2 ) );
+            vec4_t xxxx1_1 = VecShuffle(xxxx1, xxxx1, VecShuffleMask(1, 3, 0, 2));
+            vec4_t yyyy1_1 = VecShuffle(yyyy1, yyyy1, VecShuffleMask(1, 3, 0, 2));
+            vec4_t zzzz1_1 = VecShuffle(zzzz1, zzzz1, VecShuffleMask(1, 3, 0, 2));
+            vec4_t wwww1_1 = VecShuffle(wwww1, wwww1, VecShuffleMask(1, 3, 0, 2));
 
-            vec4_t t = _mm_div_ps( zzzz1, _mm_sub_ps( zzzz1, zzzz0 ) );
-            vec4_t new_xxxx0 = INTERSECT_EDGE( xxxx0, xxxx1, t );
-            vec4_t new_yyyy0 = INTERSECT_EDGE( yyyy0, yyyy1, t );
-            vec4_t new_wwww0 = INTERSECT_EDGE( wwww0, wwww1, t );
+            vec4_t t = VecMul(zzzz1, VecRcp(_mm_sub_ps( zzzz1, zzzz0)));
+            vec4_t new_xxxx0 = INTERSECT_EDGE(xxxx0, xxxx1, t);
+            vec4_t new_yyyy0 = INTERSECT_EDGE(yyyy0, yyyy1, t);
+            vec4_t new_wwww0 = INTERSECT_EDGE(wwww0, wwww1, t);
 
-			t = _mm_div_ps( zzzz0_1, _mm_sub_ps( zzzz0_1, zzzz0 ) );
-            vec4_t new_xxxx1 = INTERSECT_EDGE( xxxx0, xxxx0_1, t );
-            vec4_t new_yyyy1 = INTERSECT_EDGE( yyyy0, yyyy0_1, t );
-            vec4_t new_wwww1 = INTERSECT_EDGE( wwww0, wwww0_1, t );
+			t = VecMul(zzzz0_1, VecRcp(_mm_sub_ps( zzzz0_1, zzzz0)));
+            vec4_t new_xxxx1 = INTERSECT_EDGE(xxxx0, xxxx0_1, t );
+            vec4_t new_yyyy1 = INTERSECT_EDGE(yyyy0, yyyy0_1, t );
+            vec4_t new_wwww1 = INTERSECT_EDGE(wwww0, wwww0_1, t );
 
-			t = _mm_div_ps( zzzz1_1, _mm_sub_ps( zzzz1_1, zzzz0 ) );
-            vec4_t new_xxxx2 = INTERSECT_EDGE( xxxx1, xxxx1_1, t );
-            vec4_t new_yyyy2 = INTERSECT_EDGE( yyyy1, yyyy1_1, t );
-            vec4_t new_wwww2 = INTERSECT_EDGE( wwww1, wwww1_1, t );
+			t = VecMul(zzzz1_1, VecRcp(_mm_sub_ps(zzzz1_1, zzzz0)));
+            vec4_t new_xxxx2 = INTERSECT_EDGE(xxxx1, xxxx1_1, t);
+            vec4_t new_yyyy2 = INTERSECT_EDGE(yyyy1, yyyy1_1, t);
+            vec4_t new_wwww2 = INTERSECT_EDGE(wwww1, wwww1_1, t);
 
-            vec4_t x0 = _mm_div_ps( xxxx0, wwww0 );
-            vec4_t y0 = _mm_div_ps( yyyy0, wwww0 );
-            vec4_t x1 = _mm_div_ps( xxxx1, wwww1 );
-            vec4_t y1 = _mm_div_ps( yyyy1, wwww1 );
-            vec4_t x2 = _mm_div_ps( new_xxxx0, new_wwww0 );
-            vec4_t y2 = _mm_div_ps( new_yyyy0, new_wwww0 );
-            vec4_t x3 = _mm_div_ps( new_xxxx1, new_wwww1 );
-            vec4_t y3 = _mm_div_ps( new_yyyy1, new_wwww1 );
-            vec4_t x4 = _mm_div_ps( new_xxxx2, new_wwww2 );
-            vec4_t y4 = _mm_div_ps( new_yyyy2, new_wwww2 );
+            vec4_t x0 = VecMul(xxxx0, VecRcp(wwww0));
+            vec4_t y0 = VecMul(yyyy0, VecRcp(wwww0));
+            vec4_t x1 = VecMul(xxxx1, VecRcp(wwww1));
+            vec4_t y1 = VecMul(yyyy1, VecRcp(wwww1));
+            vec4_t x2 = VecMul(new_xxxx0, VecRcp(new_wwww0));
+            vec4_t y2 = VecMul(new_yyyy0, VecRcp(new_wwww0));
+            vec4_t x3 = VecMul(new_xxxx1, VecRcp(new_wwww1));
+            vec4_t y3 = VecMul(new_yyyy1, VecRcp(new_wwww1));
+            vec4_t x4 = VecMul(new_xxxx2, VecRcp(new_wwww2));
+            vec4_t y4 = VecMul(new_yyyy2, VecRcp(new_wwww2));
 
-			x_min = _mm_min_ps( _mm_min_ps( x0, x1 ), _mm_min_ps( x2, _mm_min_ps( x3, x4 ) ) );
-			x_max = _mm_max_ps( _mm_max_ps( x0, x1 ), _mm_max_ps( x2, _mm_max_ps( x3, x4 ) ) );
-			y_min = _mm_min_ps( _mm_min_ps( y0, y1 ), _mm_min_ps( y2, _mm_min_ps( y3, y4 ) ) );
-			y_max = _mm_max_ps( _mm_max_ps( y0, y1 ), _mm_max_ps( y2, _mm_max_ps( y3, y4 ) ) );
+			x_min = _mm_min_ps(_mm_min_ps(x0, x1), _mm_min_ps(x2, _mm_min_ps(x3, x4)));
+			x_max = _mm_max_ps(_mm_max_ps(x0, x1), _mm_max_ps(x2, _mm_max_ps(x3, x4)));
+			y_min = _mm_min_ps(_mm_min_ps(y0, y1), _mm_min_ps(y2, _mm_min_ps(y3, y4)));
+			y_max = _mm_max_ps(_mm_max_ps(y0, y1), _mm_max_ps(y2, _mm_max_ps(y3, y4)));
+#undef INTERSECT_EDGE
 		}
 
-        vec4_t min_0 = _mm_min_ps( VecShuffle( x_min, y_min, VecShuffleMask( 0, 1, 0, 1 ) ), VecShuffle( x_min, y_min, VecShuffleMask( 2, 3, 2, 3 ) ) );
-        vec4_t max_0 = _mm_max_ps( VecShuffle( x_max, y_max, VecShuffleMask( 0, 1, 0, 1 ) ), VecShuffle( x_max, y_max, VecShuffleMask( 2, 3, 2, 3 ) ) );
+        vec4_t min_0 = _mm_min_ps(VecShuffle(x_min, y_min, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_min, y_min, VecShuffleMask(2, 3, 2, 3)));
+        vec4_t max_0 = _mm_max_ps(VecShuffle(x_max, y_max, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_max, y_max, VecShuffleMask(2, 3, 2, 3)));
 
-        vec4_t min_1 = _mm_min_ps( VecShuffle( min_0, min_0, VecShuffleMask( 0, 2, 0, 0 ) ), VecShuffle( min_0, min_0, VecShuffleMask( 1, 3, 0, 0 ) ) );
-        vec4_t max_1 = _mm_max_ps( VecShuffle( max_0, max_0, VecShuffleMask( 0, 2, 0, 0 ) ), VecShuffle( max_0, max_0, VecShuffleMask( 1, 3, 0, 0 ) ) );
+        vec4_t min_1 = _mm_min_ps(VecShuffle(min_0, min_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(min_0, min_0, VecShuffleMask(1, 3, 0, 0)));
+        vec4_t max_1 = _mm_max_ps(VecShuffle(max_0, max_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(max_0, max_0, VecShuffleMask(1, 3, 0, 0)));
 
-		VecIntStore( bounds_array, VecFloat2Int( get_tile_bounds( min_1, max_1 ) ) );
+		VecIntStore(bounds_array, VecFloat2Int(get_tile_bounds(min_1, max_1)));
 		return mask == 15 && intersect_near == false;
-
-		#undef INTERSECT_EDGE
 	}
 
-	template < bool select_tiles > void push_object_clipped( const vec4_t* matrix, float* z, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* bounds_array, int* flag )
+	template < bool select_tiles > void push_object_clipped( const vec4_t* matrix, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* bounds_array, int* flag )
 	{
         constexpr uint32_t max_triangles_in_object = 1024;
 		_MM_ALIGN16 vec4_t transformed_vertices[ max_triangles_in_object ];
-		_MM_ALIGN16 vec2_t clipped_triangles[ max_triangles_in_object*3 ];
+		_MM_ALIGN16 vec4_t clipped_triangles[ max_triangles_in_object*3 ];
 
 		int aligned_count = ( vertex_count + 3 ) & ~3;
 		assert( aligned_count < max_triangles_in_object );
@@ -279,26 +327,26 @@ private:
 		assert( clipped_triangle_count < max_triangles_in_object );
 
 		int tris_to_pad = ( ( clipped_triangle_count + 3 ) & ~3 ) - clipped_triangle_count;
-		vec2_t& v0 = clipped_triangles[ clipped_triangle_count * 3 - 3 ];
-		vec2_t& v1 = clipped_triangles[ clipped_triangle_count * 3 - 2 ];
-		vec2_t& v2 = clipped_triangles[ clipped_triangle_count * 3 - 1 ];
+		vec4_t& v0 = clipped_triangles[ clipped_triangle_count * 3 - 3 ];
+		vec4_t& v1 = clipped_triangles[ clipped_triangle_count * 3 - 2 ];
+		vec4_t& v2 = clipped_triangles[ clipped_triangle_count * 3 - 1 ];
 		for ( int i = 0; i < tris_to_pad; ++i, ++clipped_triangle_count )
 		{
 			clipped_triangles[ clipped_triangle_count*3 + 0 ] = v0;
 			clipped_triangles[ clipped_triangle_count*3 + 1 ] = v1;
 			clipped_triangles[ clipped_triangle_count*3 + 2 ] = v2;
 		}
-		push_triangle_batched< select_tiles, false >( flag, z, clipped_triangles, clipped_triangle_count*3, 0, bounds_array );
+		push_triangle_batched< select_tiles, false >( flag, clipped_triangles, clipped_triangle_count*3, 0, bounds_array );
 	}
 
 	template< int v, bool use_plane > __forceinline vec4_t intersectLineZ( vec4_t a, vec4_t b, vec4_t plane )
 	{		
 		//  t = (a.x - a.w) / (b.w - a.w - b.x + a.x);
-        vec4_t bz = VecShuffle( b, b, VecShuffleMask( v, v, v, v ) );
-        vec4_t az = VecShuffle( a, a, VecShuffleMask( v, v, v, v ) );
-        vec4_t bw = _mm_mul_ps( plane, VecShuffle( b, b, VecShuffleMask( 3, 3, 3, 3 ) ) );
-        vec4_t aw = _mm_mul_ps( plane, VecShuffle( a, a, VecShuffleMask( 3, 3, 3, 3 ) ) );
-		return _mm_add_ps( b, _mm_mul_ps( _mm_sub_ps( a, b ), use_plane ? _mm_div_ps( _mm_sub_ps( bw, bz ), _mm_add_ps( _mm_sub_ps( az, bz ), _mm_sub_ps( bw, aw ) ) ) : _mm_div_ps( bz, _mm_sub_ps( bz, az ) ) ) );
+        vec4_t bz = VecShuffle(b, b, VecShuffleMask(v, v, v, v));
+        vec4_t az = VecShuffle(a, a, VecShuffleMask(v, v, v, v));
+        vec4_t bw = _mm_mul_ps(plane, VecShuffle(b, b, VecShuffleMask(3, 3, 3, 3 )));
+        vec4_t aw = _mm_mul_ps(plane, VecShuffle(a, a, VecShuffleMask(3, 3, 3, 3 )));
+		return _mm_add_ps(b, _mm_mul_ps(_mm_sub_ps(a, b), use_plane ? VecMul(_mm_sub_ps( bw, bz ), VecRcp(_mm_add_ps(_mm_sub_ps(az, bz), _mm_sub_ps(bw, aw)))) : VecMul(bz, VecRcp(_mm_sub_ps(bz, az)))));
 	}
 
 	template< int vertex_component, bool cmp_func > __forceinline int clip_triangle( const vec4_t* input, int count, vec4_t* output, vec4_t plane )
@@ -353,12 +401,11 @@ private:
 		return vertices / 3;
 	}
 
-	__forceinline int clip_triangle( __m128* v, vec2_t* dst )
+	__forceinline int clip_triangle( __m128* v, vec4_t* dst )
 	{
         vec4_t g_total_width_v = Vector4(g_total_width);
         vec4_t g_total_height_v = Vector4(g_total_height);
 
-		#define PROJECT(v0, v1) _mm_div_ps( _mm_movelh_ps( v0, v1 ), ( VecShuffle( v0, v1, VecShuffleMask( 3, 3, 3, 3 ) ) ) )
 		int count = 4;
         vec4_t input_array[ 196 ], output_array[ 196 ];
 		count = clip_triangle< 1, false >( v, count, input_array, _mm_setzero_ps() ); // y < 0
@@ -368,15 +415,10 @@ private:
 		count = clip_triangle< 1, true >( output_array, count, input_array, g_total_height_v ); // y > 720
 
 		int aligned_count = 3 *( ( count + 1 ) & ~1 );
-		for ( int i = 0; i < aligned_count; i += 6 )
-		{
-			VecStoreU( dst + i + 0, PROJECT( input_array[ i + 0 ], input_array[ i + 1 ] ) );
-			VecStoreU( dst + i + 2, PROJECT( input_array[ i + 2 ], input_array[ i + 3 ] ) );
-			VecStoreU( dst + i + 4, PROJECT( input_array[ i + 4 ], input_array[ i + 5 ] ) );
-		}
-		return count;
+		for ( int i = 0; i < aligned_count; ++i)
+            dst[i] = input_array[i];
 
-		#undef PROJECT
+		return count;
 	}
 
 	__forceinline vec4_t get_tile_bounds( vec4_t v_min, vec4_t v_max )
@@ -387,19 +429,7 @@ private:
 		return _mm_max_ps( _mm_min_ps( tile_bounds, g_tile_bounds ), _mm_setzero_ps() );
 	}
 
-    void sort_triangles(stl::vector<uint64_t>& indices);
-
-    inline void sort( __m128 &A0, __m128 &A1, __m128 &B0, __m128 &B1 )
-    {
-        __m128 mask = _mm_cmple_ps( B0, B1 );
-        __m128 sx = _mm_add_ps( A0, A1 );
-        A0 = _mm_or_ps( _mm_and_ps( mask, A0 ), _mm_andnot_ps( mask, A1 ) );
-        A1 = _mm_sub_ps( sx, A0 );
-
-        __m128 sy = _mm_add_ps( B0, B1 );
-        B0 = _mm_or_ps( _mm_and_ps( mask, B0 ), _mm_andnot_ps( mask, B1 ) );
-        B1 = _mm_sub_ps(sy, B0);
-    }
+    void sort_triangles(uint64_t* triangles, uint32_t size);
 
     template <bool is_occluder> __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const __m128i* masks, int* flag)
     {
@@ -438,10 +468,6 @@ private:
         __m128 vx0 = tri.x0, vx1 = tri.x1, vx2 = tri.x2;
         __m128 vy0 = tri.y0, vy1 = tri.y1, vy2 = tri.y2;
 
-        sort(vx0, vx1, vy0, vy1);
-        sort(vx1, vx2, vy1, vy2);
-        sort(vx0, vx1, vy0, vy1);
-
         _MM_ALIGN16 int iy0[4], iy1[4], iy2[4], ix0[4], ix1[4], ix2[4], dx1[4], dx2[4], dx3[4];
 
         vec4_t vdx1 = _mm_mul_ps(_mm_sub_ps(vx2, vx0), _mm_rcp_ps(_mm_sub_ps(vy2, vy0)));
@@ -473,17 +499,15 @@ private:
             if ((tri.mask & mask ) == 0)
                 continue;
 
-            bool skip = true;
-            for (int y = iy0[i]; y < iy2[i] && m_skip_full; ++y)
-            {
-                skip &= tile.m_mask & (1ull << y);
-                if (!skip)
-                    break;
-            }
-            if (skip && m_skip_full)
+            assert(iy0[i] <= 32);
+            assert(iy2[i] <= 32);
+            uint32_t span0 = 0xffffffff << iy0[i];
+            uint32_t span1 = 0xffffffff >> (32-iy2[i]);
+            uint32_t span = span0 & span1;
+            if (m_skip_full && (tile.m_mask & span) == span)
             {
                 ++tile.m_triangles_skipped;
-                return;
+                continue;
             }
 
             tile.m_triangles_drawn_total++;
@@ -509,6 +533,7 @@ public:
     uint32_t    m_triangles_drawn_occluder_total = 0;
     uint32_t    m_triangles_drawn_occludee_total = 0;
     uint32_t    m_triangles_skipped = 0;
+    uint32_t    m_triangles_offscreen = 0;
 
     Rasterizer()
     {
@@ -519,7 +544,7 @@ public:
 
         m_full_span = Vector4Int(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff);
 
-        m_triangles.reserve(128*1024);
+        m_triangles.resize(g_max_4triangles);
         m_sort.reserve(128*1024);
     }
 
@@ -527,7 +552,7 @@ public:
     {
         m_transform = m;
 
-        m_triangles.clear();
+        m_triangle_count = 0;
         for (auto & t : m_tiles)
             t.clear();
 
@@ -538,11 +563,12 @@ public:
         m_triangles_drawn_occluder_total = 0;
         m_triangles_drawn_occludee_total = 0;
         m_triangles_skipped = 0;
+        m_triangles_offscreen = 0;
     }
 
     void push_object( const Matrix& m, const vec4_t& v_min, const vec4_t& v_max, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* flag )
     {
-        _MM_ALIGN16 int bounds_array[4];
+        _MM_ALIGN16 int bounds_array[4] = { 0 };
         vec4_t matrix[ 16 ];
         ExtractMatrix(m * m_transform, matrix);
 
@@ -555,32 +581,34 @@ public:
         else
             m_triangles_occludee_total += index_count / 3;
 
-        _MM_ALIGN16 float z[4];
-        bool inside = occlude_object(matrix, v_min, v_max, bounds_array, z);
+        bool inside = occlude_object(matrix, v_min, v_max, bounds_array);
         if ( bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3] )
+        {
+            m_triangles_offscreen += index_count / 3;
             return;
+        }
 
         if ( inside )
         {
             constexpr uint32_t max_triangles_in_object = 1024;
-            _MM_ALIGN16 vec2_t transformed_vertices[ max_triangles_in_object ];
+            _MM_ALIGN16 vec4_t transformed_vertices[ max_triangles_in_object ];
 
             int aligned_count = ( vertex_count + 3 ) & ~3;
             assert( aligned_count < max_triangles_in_object );
             for ( int i = 0; i < aligned_count; i += 4 )
-                Vector3TransformCoord4( matrix, vertices + i, transformed_vertices + i );
+                Vector3TransformCoord4Homogeneous( matrix, vertices + i, transformed_vertices + i );
 
             if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-                push_triangle_batched< false, true >( flag, z, transformed_vertices, index_count, indices, bounds_array );
+                push_triangle_batched< false, true >( flag, transformed_vertices, index_count, indices, bounds_array );
             else
-                push_triangle_batched< true, true >( flag, z, transformed_vertices, index_count, indices, bounds_array );
+                push_triangle_batched< true, true >( flag, transformed_vertices, index_count, indices, bounds_array );
         }
         else
         {
             if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-                push_object_clipped<false>( matrix, z, indices, index_count, vertices, vertex_count, bounds_array, flag );
+                push_object_clipped<false>( matrix, indices, index_count, vertices, vertex_count, bounds_array, flag );
             else
-                push_object_clipped<true>( matrix, z, indices, index_count, vertices, vertex_count, bounds_array, flag );
+                push_object_clipped<true>( matrix, indices, index_count, vertices, vertex_count, bounds_array, flag );
         }
     }
 
@@ -597,22 +625,27 @@ public:
     void sort_triangles()
     {
         for (auto & tile : m_tiles)
-            sort_triangles(tile.m_triangles);
+            sort_triangles((uint64_t*)tile.m_triangles.data(), tile.m_triangle_count);
     }
 
     void draw_triangles()
     {
         for (auto & tile : m_tiles)
         {
-            assert(tile.m_triangles.size() <= m_triangles.size());
-            const uint64_t* tri = tile.m_triangles.data(), *tri_end = tri + tile.m_triangles.size();
+            assert(tile.m_triangle_count <= m_triangle_count);
+            const uint64_t* tri = tile.m_triangles.data(), *tri_end = tri + tile.m_triangle_count;
             const Triangle* tri_data = m_triangles.data();
             while (tri != tri_end)
             {
-                assert((*tri>>32) < m_triangles.size());
+                assert((*tri>>32) < m_triangle_count);
                 auto & triangle = tri_data[*tri++>>32];
                 if (triangle.flag)
-                    draw_4triangles<false>(tile, triangle);
+                {
+                    if (m_skip_full && *triangle.flag)
+                        tile.m_triangles_skipped += bx::uint32_cntbits(triangle.mask);
+                    else
+                        draw_4triangles<false>(tile, triangle);
+                }
                 else
                 {
                     draw_4triangles<true>(tile, triangle);

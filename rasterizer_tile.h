@@ -8,6 +8,7 @@
 
 namespace stl = tinystl;
 
+// 112bytes, 28 bytes per priangle
 struct _MM_ALIGN16 Triangle
 {
     // x1, x2
@@ -20,13 +21,30 @@ struct _MM_ALIGN16 Triangle
     uint32_t mask;
 };
 
+// 96 bytes
+struct TrianglePacked
+{
+    uint16_t x0[4]; // 10:6
+    uint16_t x1[4]; // 10:6
+
+    uint16_t y0[4]; // 10:6
+    uint16_t y1[4]; // 10:6
+    uint16_t y2[4]; // 10:6
+
+    int32_t dx0[4]; // 15:16
+    int32_t dx1[4]; // 15:16
+    int32_t dx2[4]; // 15:16
+};
+
 struct _MM_ALIGN16 Tile
 {
-    static const int        g_tile_height = 32;
-    static const int        g_tile_width = 128;
+    static constexpr int        g_tile_height = 32;
+    static constexpr int        g_tile_width = 128;
+    static constexpr int        g_max_triangles = 64 * 1024;
 
     __m128i                 m_frame_buffer[g_tile_height];
     stl::vector<uint64_t>   m_triangles;
+    uint32_t                m_triangle_count = 0;
     stl::vector<__m128i>    m_shifts;
     uint64_t                m_mask = 0;
     uint32_t                m_triangles_drawn_total = 0;
@@ -41,7 +59,7 @@ struct _MM_ALIGN16 Tile
     void clear()
     {
         memset(m_frame_buffer, 0, sizeof(m_frame_buffer));
-        m_triangles.clear();
+        m_triangle_count = 0;
 
         m_mask = 0;
 
