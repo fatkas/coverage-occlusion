@@ -7,33 +7,26 @@
 
 #include "rasterizer_tile.h"
 
+#include <bx/uint32_t.h>
+
 struct _MM_ALIGN16 Rasterizer
 {
-	static const int g_width = 10;
+	static const int g_width = 6;
+    static const int g_height = 12;
 	static const int g_total_width = g_width * Tile::g_tile_width;
-	static const int g_total_height = Tile::g_tile_height;
+	static const int g_total_height = g_height * Tile::g_tile_height;
+
+private:
 
     stl::vector<Tile>       m_tiles;
 	Matrix			        m_transform;
     stl::vector<Triangle>   m_triangles;
     stl::vector<uint64_t>   m_sort;
+    __m128i                 m_full_span;
 
-    uint32_t                m_triangles_total = 0;
-    uint32_t                m_triangles_occluder_total = 0;
-    uint32_t                m_triangles_occludee_total = 0;
-    uint32_t                m_triangles_drawn_total = 0;
-    uint32_t                m_triangles_drawn_occluder_total = 0;
-    uint32_t                m_triangles_drawn_occludee_total = 0;
-    uint32_t                m_triangles_skipped = 0;
-
-	Rasterizer( const Matrix& m ) : m_transform( m )
-	{
-        for (int i = 0; i < g_width; ++i)
-            m_tiles.push_back(Tile(this, i));
-
-        m_triangles.reserve(128*1024);
-        m_sort.reserve(128*1024);
-	}
+    vec4_t                  g_tile_size = Vector4(1.f / (float)Tile::g_tile_width, 1.f / (float)Tile::g_tile_height, 1.f / (float)Tile::g_tile_width, 1.f / (float)Tile::g_tile_height);
+    vec4_t                  g_almost_one = Vector4(0.f, 0.f, 0.9999f, 0.9999f);
+    vec4_t                  g_tile_bounds = Vector4((float)Rasterizer::g_width, (float)Rasterizer::g_height, (float)Rasterizer::g_width, (float)Rasterizer::g_height);
 
 	inline void ExtractMatrix( const Matrix& m, vec4_t* matrix )
 	{
@@ -49,9 +42,9 @@ struct _MM_ALIGN16 Rasterizer
 		#undef EXTRACT
 	}
 
-	template < bool select_tiles, bool use_indices > inline void push_triangle_batched( int* flag, float* z, const vec2_t* src, int count, const unsigned short* indices, int* bounds_array )
+	template < bool select_tiles, bool use_indices > inline void push_triangle_batched(int* flag, float* z, const vec2_t* src, int count, const unsigned short* indices, int* bounds_array)
 	{
-		assert( ( (count / 3) & 3 ) == 0 );
+		assert(( (count / 3) & 3 ) == 0);
 
 		_MM_ALIGN16 int transformed_bounds[ 4 ];
 
@@ -110,18 +103,24 @@ struct _MM_ALIGN16 Rasterizer
 
                 vec4_t tile_bound = get_tile_bounds(min_bound, max_bound);
 				VecIntStore( transformed_bounds, VecFloat2Int( tile_bound ) );
-				assert( transformed_bounds[0] >= bounds_array[0] );
-				assert( transformed_bounds[1] >= bounds_array[1] );
-				assert( transformed_bounds[2] <= bounds_array[2] );
-				assert( transformed_bounds[3] <= bounds_array[3] );
+				assert(transformed_bounds[0] >= bounds_array[0]);
+				assert(transformed_bounds[1] >= bounds_array[1]);
+				assert(transformed_bounds[2] <= bounds_array[2]);
+				assert(transformed_bounds[3] <= bounds_array[3]);
 
-				for ( int x = transformed_bounds[0]; x < transformed_bounds[2]; ++x )
-                    m_tiles[x].m_triangles.push_back((index<<32)|t.z);
+                for (int y = transformed_bounds[1]; y < transformed_bounds[3]; ++y)
+                    for (int x = transformed_bounds[0]; x < transformed_bounds[2]; ++x)
+                    {
+                        assert(x < g_width);
+                        assert(y < g_height);
+                        m_tiles[x + y*g_width].m_triangles.push_back((index<<32)|t.z);
+                    }
 			}
 			else
 			{
                 assert(bounds_array[0] < g_width);
-                m_tiles[bounds_array[0]].m_triangles.push_back((index<<32)|t.z);
+                assert(bounds_array[1] < g_height);
+                m_tiles[bounds_array[0] + bounds_array[1]*g_width].m_triangles.push_back((index<<32)|t.z);
 			}
 		}
 	}
@@ -237,50 +236,6 @@ struct _MM_ALIGN16 Rasterizer
 		#undef INTERSECT_EDGE
 	}
 
-	void push_object( const Matrix& m, const vec4_t& v_min, const vec4_t& v_max, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* flag )
-	{
-		_MM_ALIGN16 int bounds_array[4];
-        vec4_t matrix[ 16 ];
-		ExtractMatrix(m * m_transform, matrix);
-
-        m_triangles_total += index_count / 3;
-        if (flag)
-        {
-            *flag = 0;
-            m_triangles_occluder_total += index_count / 3;
-        }
-        else
-            m_triangles_occludee_total += index_count / 3;
-
-		_MM_ALIGN16 float z[4];
-		bool inside = occlude_object(matrix, v_min, v_max, bounds_array, z);
-		if ( bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3] )
-            return;
-
-		if ( inside )
-		{
-            constexpr uint32_t max_triangles_in_object = 1024;
-			_MM_ALIGN16 vec2_t transformed_vertices[ max_triangles_in_object ];
-
-			int aligned_count = ( vertex_count + 3 ) & ~3;
-			assert( aligned_count < max_triangles_in_object );
-			for ( int i = 0; i < aligned_count; i += 4 )
-				Vector3TransformCoord4( matrix, vertices + i, transformed_vertices + i );
-
-			if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-				push_triangle_batched< false, true >( flag, z, transformed_vertices, index_count, indices, bounds_array );
-			else
-				push_triangle_batched< true, true >( flag, z, transformed_vertices, index_count, indices, bounds_array );
-		}
-		else
-		{
-			if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-				push_object_clipped<false>( matrix, z, indices, index_count, vertices, vertex_count, bounds_array, flag );
-			else
-				push_object_clipped<true>( matrix, z, indices, index_count, vertices, vertex_count, bounds_array, flag );
-		}
-	}
-
 	template < bool select_tiles > void push_object_clipped( const vec4_t* matrix, float* z, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* bounds_array, int* flag )
 	{
         constexpr uint32_t max_triangles_in_object = 1024;
@@ -291,6 +246,8 @@ struct _MM_ALIGN16 Rasterizer
 		assert( aligned_count < max_triangles_in_object );
 		for ( int i = 0; i < aligned_count; i += 4 )
 			Vector3TransformCoord4Homogeneous( matrix, vertices + i, transformed_vertices + i );
+
+        assert(index_count >= 12);
 
 		int clipped_triangle_count = 0;
 		for ( int i = 0; i < index_count; i += 12 )
@@ -424,28 +381,254 @@ struct _MM_ALIGN16 Rasterizer
 
 	__forceinline vec4_t get_tile_bounds( vec4_t v_min, vec4_t v_max )
 	{
-        vec4_t tile_size = Vector4(1.f / (float)Tile::g_tile_width, 1.f / (float)Tile::g_tile_height, 1.f / (float)Tile::g_tile_width, 1.f / (float)Tile::g_tile_height);
-        vec4_t almost_one = Vector4(0.f, 0.f, 0.9999f, 0.9999f);
-        vec4_t g_tile_bounds = Vector4((float)Rasterizer::g_width, 1.f, (float)Rasterizer::g_width, 1.f);
-
         vec4_t minmax = _mm_movelh_ps( v_min, v_max ); // xyXY
-        vec4_t tile_bounds = _mm_mul_ps( minmax, tile_size ); // x/w y/h X/w Y/h
-		tile_bounds = _mm_add_ps( tile_bounds, almost_one );
+        vec4_t tile_bounds = _mm_mul_ps( minmax, g_tile_size ); // x/w y/h X/w Y/h
+		tile_bounds = _mm_add_ps( tile_bounds, g_almost_one );
 		return _mm_max_ps( _mm_min_ps( tile_bounds, g_tile_bounds ), _mm_setzero_ps() );
 	}
 
-    void sort_triangles(int tile)
+    void sort_triangles(stl::vector<uint64_t>& indices);
+
+    inline void sort( __m128 &A0, __m128 &A1, __m128 &B0, __m128 &B1 )
     {
-        m_tiles[tile].sort_triangles();
+        __m128 mask = _mm_cmple_ps( B0, B1 );
+        __m128 sx = _mm_add_ps( A0, A1 );
+        A0 = _mm_or_ps( _mm_and_ps( mask, A0 ), _mm_andnot_ps( mask, A1 ) );
+        A1 = _mm_sub_ps( sx, A0 );
+
+        __m128 sy = _mm_add_ps( B0, B1 );
+        B0 = _mm_or_ps( _mm_and_ps( mask, B0 ), _mm_andnot_ps( mask, B1 ) );
+        B1 = _mm_sub_ps(sy, B0);
     }
 
-    void draw_triangles(int tile)
+    template <bool is_occluder> __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const __m128i* masks, int* flag)
     {
-        m_tiles[tile].draw_triangles();
-        m_triangles_drawn_total += m_tiles[tile].m_triangles_drawn_total;
-        m_triangles_drawn_occluder_total += m_tiles[tile].m_triangles_drawn_occluder_total;
-        m_triangles_drawn_occludee_total += m_tiles[tile].m_triangles_drawn_occludee_total;
-        m_triangles_skipped += m_tiles[tile].m_triangles_skipped;
+        assert((is_occluder && !flag) || (flag && !is_occluder));
+        for (int scanline = y1; scanline < y2; ++scanline)
+        {
+            int xb = xs1 >> 16;
+            int xe = xs2 >> 16;
+            xs1 += xa1;
+            xs2 += xa2;
+
+            assert(scanline >= 0);
+            assert(scanline < Tile::g_tile_height);
+
+            __m128i span = VecIntXor(masks[xb], masks[xe]);
+            if (is_occluder)
+            {
+                tile.m_frame_buffer[scanline] = VecIntOr(tile.m_frame_buffer[scanline], span);
+                uint64_t bit = _mm_movemask_epi8(VecIntCmpEqual(VecIntAnd(tile.m_frame_buffer[scanline], m_full_span), m_full_span)) == 65535;
+                tile.m_mask |= bit << scanline;
+            }
+            else
+            {
+                if (_mm_movemask_epi8(VecIntCmpEqual(VecIntAnd(tile.m_frame_buffer[scanline], span), span)) != 65535)
+                {
+                    *flag = 1;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    template < bool is_occluder > __forceinline void draw_4triangles(Tile& tile, const Triangle& tri)
+    {
+        __m128 vx0 = tri.x0, vx1 = tri.x1, vx2 = tri.x2;
+        __m128 vy0 = tri.y0, vy1 = tri.y1, vy2 = tri.y2;
+
+        sort(vx0, vx1, vy0, vy1);
+        sort(vx1, vx2, vy1, vy2);
+        sort(vx0, vx1, vy0, vy1);
+
+        _MM_ALIGN16 int iy0[4], iy1[4], iy2[4], ix0[4], ix1[4], ix2[4], dx1[4], dx2[4], dx3[4];
+
+        vec4_t vdx1 = _mm_mul_ps(_mm_sub_ps(vx2, vx0), _mm_rcp_ps(_mm_sub_ps(vy2, vy0)));
+        vec4_t vdx2 = _mm_mul_ps(_mm_sub_ps(vx1, vx0), _mm_rcp_ps(_mm_sub_ps(vy1, vy0)));
+        vec4_t vdx3 = _mm_mul_ps(_mm_sub_ps(vx2, vx1), _mm_rcp_ps(_mm_sub_ps(vy2, vy1)));
+        VecIntStore(dx1, VecFloat2Int(vdx1));
+        VecIntStore(dx2, VecFloat2Int(vdx2));
+        VecIntStore(dx3, VecFloat2Int(vdx3));
+
+        // adjust y to be inside tile bounds
+        vy0 = VecSub(vy0, Vector4(tile.m_y*Tile::g_tile_height));
+        vy1 = VecSub(vy1, Vector4(tile.m_y*Tile::g_tile_height));
+        vy2 = VecSub(vy2, Vector4(tile.m_y*Tile::g_tile_height));
+        vec4_t dy0 = VecMax(VecZero(), -vy0);
+        vec4_t dy1 = VecMax(VecZero(), -vy1);
+        vy0 = VecMin(VecMax(vy0, VecZero()), Vector4(Tile::g_tile_height));
+        vy1 = VecMin(VecMax(vy1, VecZero()), Vector4(Tile::g_tile_height));
+        vy2 = VecMin(VecMax(vy2, VecZero()), Vector4(Tile::g_tile_height));
+
+        VecIntStore(iy0, VecFloat2Int(vy0));
+        VecIntStore(iy1, VecFloat2Int(vy1));
+        VecIntStore(iy2, VecFloat2Int(vy2));
+        VecIntStore(ix0, VecFloat2Int(VecMad(vdx1, dy0, vx0)));
+        VecIntStore(ix1, VecFloat2Int(VecMad(vdx2, dy0, vx0)));
+        VecIntStore(ix2, VecFloat2Int(VecMad(vdx3, dy1, vx1)));
+
+        for (size_t i = 0, mask = 1; i < 4; ++i, mask <<= 1)
+        {
+            if ((tri.mask & mask ) == 0)
+                continue;
+
+            bool skip = true;
+            for (int y = iy0[i]; y < iy2[i] && m_skip_full; ++y)
+            {
+                skip &= tile.m_mask & (1ull << y);
+                if (!skip)
+                    break;
+            }
+            if (skip && m_skip_full)
+            {
+                ++tile.m_triangles_skipped;
+                return;
+            }
+
+            tile.m_triangles_drawn_total++;
+            if (is_occluder)
+                tile.m_triangles_drawn_occluder_total++;
+            else
+                tile.m_triangles_drawn_occludee_total++;
+
+            int xs1 = ix0[i], xs2 = ix1[i], xs3 = ix2[i];
+            if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], tile.m_shifts.data(), tri.flag))
+                return;
+            if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], tile.m_shifts.data(), tri.flag))
+                return;
+        }
+    }
+public:
+
+    bool        m_skip_full = false;
+    uint32_t    m_triangles_total = 0;
+    uint32_t    m_triangles_occluder_total = 0;
+    uint32_t    m_triangles_occludee_total = 0;
+    uint32_t    m_triangles_drawn_total = 0;
+    uint32_t    m_triangles_drawn_occluder_total = 0;
+    uint32_t    m_triangles_drawn_occludee_total = 0;
+    uint32_t    m_triangles_skipped = 0;
+
+    Rasterizer()
+    {
+        m_tiles.reserve(g_width*g_height);
+        for (int j = 0; j < g_height; ++j)
+            for (int i = 0; i < g_width; ++i)
+                m_tiles.push_back(Tile(i, j));
+
+        m_full_span = Vector4Int(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff);
+
+        m_triangles.reserve(128*1024);
+        m_sort.reserve(128*1024);
+    }
+
+    void begin(const Matrix& m)
+    {
+        m_transform = m;
+
+        m_triangles.clear();
+        for (auto & t : m_tiles)
+            t.clear();
+
+        m_triangles_total = 0;
+        m_triangles_occluder_total = 0;
+        m_triangles_occludee_total = 0;
+        m_triangles_drawn_total = 0;
+        m_triangles_drawn_occluder_total = 0;
+        m_triangles_drawn_occludee_total = 0;
+        m_triangles_skipped = 0;
+    }
+
+    void push_object( const Matrix& m, const vec4_t& v_min, const vec4_t& v_max, const uint16_t* indices, int index_count, vec4_t* vertices, int vertex_count, int* flag )
+    {
+        _MM_ALIGN16 int bounds_array[4];
+        vec4_t matrix[ 16 ];
+        ExtractMatrix(m * m_transform, matrix);
+
+        m_triangles_total += index_count / 3;
+        if (flag)
+        {
+            *flag = 0;
+            m_triangles_occluder_total += index_count / 3;
+        }
+        else
+            m_triangles_occludee_total += index_count / 3;
+
+        _MM_ALIGN16 float z[4];
+        bool inside = occlude_object(matrix, v_min, v_max, bounds_array, z);
+        if ( bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3] )
+            return;
+
+        if ( inside )
+        {
+            constexpr uint32_t max_triangles_in_object = 1024;
+            _MM_ALIGN16 vec2_t transformed_vertices[ max_triangles_in_object ];
+
+            int aligned_count = ( vertex_count + 3 ) & ~3;
+            assert( aligned_count < max_triangles_in_object );
+            for ( int i = 0; i < aligned_count; i += 4 )
+                Vector3TransformCoord4( matrix, vertices + i, transformed_vertices + i );
+
+            if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
+                push_triangle_batched< false, true >( flag, z, transformed_vertices, index_count, indices, bounds_array );
+            else
+                push_triangle_batched< true, true >( flag, z, transformed_vertices, index_count, indices, bounds_array );
+        }
+        else
+        {
+            if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
+                push_object_clipped<false>( matrix, z, indices, index_count, vertices, vertex_count, bounds_array, flag );
+            else
+                push_object_clipped<true>( matrix, z, indices, index_count, vertices, vertex_count, bounds_array, flag );
+        }
+    }
+
+    const __m128i* get_framebuffer(int tile) const
+    {
+        return m_tiles[tile].m_frame_buffer;
+    }
+
+    const stl::vector<Tile>& get_tiles() const
+    {
+        return m_tiles;
+    }
+
+    void sort_triangles()
+    {
+        for (auto & tile : m_tiles)
+            sort_triangles(tile.m_triangles);
+    }
+
+    void draw_triangles()
+    {
+        for (auto & tile : m_tiles)
+        {
+            assert(tile.m_triangles.size() <= m_triangles.size());
+            const uint64_t* tri = tile.m_triangles.data(), *tri_end = tri + tile.m_triangles.size();
+            const Triangle* tri_data = m_triangles.data();
+            while (tri != tri_end)
+            {
+                assert((*tri>>32) < m_triangles.size());
+                auto & triangle = tri_data[*tri++>>32];
+                if (triangle.flag)
+                    draw_4triangles<false>(tile, triangle);
+                else
+                {
+                    draw_4triangles<true>(tile, triangle);
+                    if (m_skip_full && tile.m_mask == ~0u)
+                    {
+                        while (tri != tri_end)
+                            tile.m_triangles_skipped += bx::uint32_cntbits(tri_data[*tri++>>32].mask);
+                        break;
+                    }
+                }
+            }
+            m_triangles_drawn_total += tile.m_triangles_drawn_total;
+            m_triangles_drawn_occluder_total += tile.m_triangles_drawn_occluder_total;
+            m_triangles_drawn_occludee_total += tile.m_triangles_drawn_occludee_total;
+            m_triangles_skipped += tile.m_triangles_skipped;
+        }
     }
     
 	static void Init();

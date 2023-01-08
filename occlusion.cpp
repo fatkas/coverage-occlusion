@@ -23,6 +23,8 @@
 #include "vs_fullscreen.bin.h"
 #include "fs_fullscreen.bin.h"
 
+#include <string>
+
 namespace
 {
 
@@ -170,11 +172,12 @@ public:
 		m_reset  = BGFX_RESET_NONE;
 
 		m_scrollArea = 0;
-		m_dim        = 32;
+		m_dim        = 1;
 		m_maxDim     = 40;
 		m_transform  = 1;
 
 		m_timeOffset = bx::getHPCounter();
+        m_timeStop = m_timeOffset;
 
 		m_deltaTimeNs    = 0;
 		m_deltaTimeAvgNs = 0;
@@ -349,7 +352,8 @@ public:
             ImGui::Checkbox("Wireframe", &m_Wireframe);
             ImGui::Checkbox("Occlusion", &m_Occlusion);
             ImGui::Checkbox("Coverage", &m_ShowCoverage);
-			ImGui::SliderInt("Dim", &m_dim, 5, m_maxDim);
+            ImGui::Checkbox("Skip full", &m_Rasterizer.m_skip_full);
+			ImGui::SliderInt("Dim", &m_dim, 1, m_maxDim);
             ImGui::SliderFloat("Spacing", &m_Spacing, 50.f, 100.f);
 			ImGui::Text("Draw calls: %d", m_dim*m_dim*m_dim);
             ImGui::Text("Draw calls visible: %d", visible);
@@ -365,13 +369,32 @@ public:
 			ImGui::Text("Waiting for render thread %0.6f [ms]", double(stats->waitRender) * toMs);
 			ImGui::Text("Waiting for submit thread %0.6f [ms]", double(stats->waitSubmit) * toMs);
 
-            ImGui::Text("total triangles %d", m_triangles_total);
-            ImGui::Text("total occluder triangles %d", m_triangles_occluder_total);
-            ImGui::Text("total occludee triangles %d", m_triangles_occludee_total);
-            ImGui::Text("total drawn triangles %d", m_triangles_drawn_total);
-            ImGui::Text("total drawn occluder triangles %d", m_triangles_drawn_occluder_total);
-            ImGui::Text("total drawn occludee triangles %d", m_triangles_drawn_occludee_total);
-            ImGui::Text("total skipped triangles %d", m_triangles_skipped);
+            ImGui::Text("total triangles %d", m_Rasterizer.m_triangles_total);
+            ImGui::Text("total occluder triangles %d", m_Rasterizer.m_triangles_occluder_total);
+            ImGui::Text("total occludee triangles %d", m_Rasterizer.m_triangles_occludee_total);
+            ImGui::Text("total drawn triangles %d", m_Rasterizer.m_triangles_drawn_total);
+            ImGui::Text("total drawn occluder triangles %d", m_Rasterizer.m_triangles_drawn_occluder_total);
+            ImGui::Text("total drawn occludee triangles %d", m_Rasterizer.m_triangles_drawn_occludee_total);
+            ImGui::Text("total skipped triangles %d", m_Rasterizer.m_triangles_skipped);
+
+            const auto& tiles = m_Rasterizer.get_tiles();
+            if (ImGui::TreeNode("Tiles", "Tiles (%d)", (uint32_t)tiles.size()))
+            {
+                for (auto & t : tiles)
+                {
+                    if (ImGui::TreeNode(std::to_string(t.m_x + t.m_y*Rasterizer::g_width).c_str(), "Tile %d (%d/%d) %s", t.m_x, (uint32_t)t.m_triangles.size(), t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
+                    {
+                        ImGui::Text("total sorted triangles %d", (uint32_t)t.m_triangles.size());
+                        ImGui::Text("total drawn triangles %d", t.m_triangles_drawn_total);
+                        ImGui::Text("total drawn occluder triangles %d", t.m_triangles_drawn_occluder_total);
+                        ImGui::Text("total drawn occludee triangles %d", t.m_triangles_drawn_occludee_total);
+                        ImGui::Text("total skipped triangles %d", t.m_triangles_skipped);
+                        ImGui::Text("mask %llu", t.m_mask);
+                        ImGui::TreePop();
+                    }
+                }
+                ImGui::TreePop();
+            }
 
 			ImGui::End();
 
@@ -449,11 +472,10 @@ public:
                 }
             }
 
+            Matrix view_mat = MatrixSet(view), proj_mat = MatrixSet(proj);
+            m_Rasterizer.begin(view_mat * proj_mat * MatrixScaling(0.5f, -0.5f, 1.0f) * MatrixTranslation(Vector4( .5f, 0.5f, 0.0f, 1.0f )) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f));
             if (m_Occlusion)
             {
-                Matrix view_mat = MatrixSet(view), proj_mat = MatrixSet(proj);
-                Rasterizer rast( view_mat * proj_mat * MatrixScaling( 0.5f, -0.5f, 1.0f ) * MatrixTranslation( Vector4( .5f, 0.5f, 0.0f, 1.0f ) ) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f ) );
-
                 vec4_t box_min = {-1.f, -1.f, -1.f, 1.f};
                 vec4_t box_max = {+1.f, +1.f, +1.f, 1.f};
 
@@ -461,12 +483,12 @@ public:
                 for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i )
                 {
                     m_Visibility[i] = 0;
-                    rast.push_object(MatrixSet(m_Transforms[i].data()),
+                    m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
                                      box_min, box_max,
                                      s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
                                      s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
                                      &m_Visibility[i]);
-                    rast.push_object(MatrixSet(m_Transforms[i].data()),
+                    m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
                                      box_min, box_max,
                                      s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
                                      s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
@@ -475,40 +497,33 @@ public:
                 int64_t occlusion_mid = bx::getHPCounter();
                 occlusion_push_time = occlusion_mid - occlusion_start;
 
-                occlusion_sort_time = occlusion_draw_time = 0;
-                for (int i = 0; i < Rasterizer::g_width; ++i)
                 {
                     occlusion_start = bx::getHPCounter();
-                    rast.sort_triangles(i);
+                    m_Rasterizer.sort_triangles();
                     occlusion_mid = bx::getHPCounter();
-                    rast.draw_triangles(i);
+                    m_Rasterizer.draw_triangles();
                     int64_t occlusion_end = bx::getHPCounter();
 
-                    occlusion_sort_time += occlusion_mid - occlusion_start;
-                    occlusion_draw_time += occlusion_end - occlusion_mid;
+                    occlusion_sort_time = occlusion_mid - occlusion_start;
+                    occlusion_draw_time = occlusion_end - occlusion_mid;
                 }
-
-                m_triangles_total = rast.m_triangles_total;
-                m_triangles_occluder_total = rast.m_triangles_occluder_total;
-                m_triangles_occludee_total = rast.m_triangles_occludee_total;
-                m_triangles_drawn_total = rast.m_triangles_drawn_total;
-                m_triangles_drawn_occluder_total = rast.m_triangles_drawn_occluder_total;
-                m_triangles_drawn_occludee_total = rast.m_triangles_drawn_occludee_total;
-                m_triangles_skipped = rast.m_triangles_skipped;
 
                 if (m_ShowCoverage)
                 {
                     stl::vector<uint8_t> data(Rasterizer::g_total_width*Rasterizer::g_total_height);
-                    for ( int j = 0; j < Rasterizer::g_width; ++j )
+                    for ( int i = 0; i < Rasterizer::g_height; ++i )
                     {
-                        for ( int y = 0; y < Tile::g_tile_height; ++y )
-                            for ( int x = 0; x < Tile::g_tile_width; ++x )
-                            {
-                                __m128i buf = rast.m_tiles[ j ].m_frame_buffer[y];
-                                unsigned int mask = ( (unsigned int*)( &buf ) )[ x >> 5 ];
-                                int bit = mask & ( 1 << ( x & 31 ) );
-                                data[j*Tile::g_tile_width + 127 - x + y*Rasterizer::g_total_width] = bit ? 255 : 0;
-                            }
+                        for ( int j = 0; j < Rasterizer::g_width; ++j )
+                        {
+                            for ( int y = 0; y < Tile::g_tile_height; ++y )
+                                for ( int x = 0; x < Tile::g_tile_width; ++x )
+                                {
+                                    __m128i buf = m_Rasterizer.get_framebuffer(j + i*Rasterizer::g_width)[y];
+                                    unsigned int mask = ( (unsigned int*)( &buf ) )[ x >> 5 ];
+                                    int bit = mask & ( 1 << ( x & 31 ) );
+                                    data[j*Tile::g_tile_width + 127 - x + (y + i*Tile::g_tile_height)*Rasterizer::g_total_width] = bit ? 255 : 0;
+                                }
+                        }
                     }
                     const bgfx::Memory* mem = bgfx::makeRef(data.data(), (uint32_t)data.size());
                     bgfx::updateTexture2D(debug_coverage, 0, 0, 0, 0, Rasterizer::g_total_width, Rasterizer::g_total_height, mem, Rasterizer::g_total_width);
@@ -519,13 +534,6 @@ public:
                 occlusion_push_time = occlusion_sort_time = occlusion_draw_time = 0;
                 for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i )
                     m_Visibility[i] = 1;
-                m_triangles_total = 0;
-                m_triangles_occluder_total = 0;
-                m_triangles_occludee_total = 0;
-                m_triangles_drawn_total = 0;
-                m_triangles_drawn_occluder_total = 0;
-                m_triangles_drawn_occludee_total = 0;
-                m_triangles_skipped = 0;
             }
 
 			submit();
@@ -572,13 +580,7 @@ public:
 	int64_t  m_deltaTimeAvgNs;
 	int64_t  m_numFrames;
 
-    uint32_t                m_triangles_total = 0;
-    uint32_t                m_triangles_occluder_total = 0;
-    uint32_t                m_triangles_occludee_total = 0;
-    uint32_t                m_triangles_drawn_total = 0;
-    uint32_t                m_triangles_drawn_occluder_total = 0;
-    uint32_t                m_triangles_drawn_occludee_total = 0;
-    uint32_t                m_triangles_skipped = 0;
+    Rasterizer m_Rasterizer;
 
 	bgfx::ProgramHandle m_program;
     bgfx::ProgramHandle m_fullscreen;
