@@ -69,6 +69,7 @@ function exampleProjectDefaults()
 		path.join(BGFX_DIR, "include"),
 		path.join(BGFX_DIR, "3rdparty"),
 		path.join(BGFX_DIR, "examples/common"),
+		path.join(BGFX_DIR, "../enkiTS/src/")
 	}
 
 	flags {
@@ -208,6 +209,11 @@ function exampleProjectDefaults()
 			"-framework QuartzCore",
 			"-weak_framework Metal",
 		}
+		buildoptions_cpp {
+			"-Wno-unused-variable",
+			"-Wno-shorten-64-to-32",
+			"-Wno-unused-function",
+		}
 
 	configuration { "ios* or tvos*" }
 		targetdir (path.join(BGFX_BUILD_DIR, "ios_" .. _ACTION))
@@ -250,6 +256,7 @@ function exampleProject(name)
 		path.join(MODULE_DIR, "**.c"),
 		path.join(MODULE_DIR, "**.cpp"),
 		path.join(MODULE_DIR, "**.h"),
+		path.join(MODULE_DIR, "../enkiTS/src/TaskScheduler.cpp")
 	}
 
 	removefiles {

@@ -2,6 +2,7 @@ cd ..
 git clone https://github.com/bkaradzic/bx.git
 git clone https://github.com/bkaradzic/bimg.git
 git clone https://github.com/bkaradzic/bgfx.git
+git clone https://github.com/dougbinks/enkiTS.git
 
 cd bgfx
 make -j8 shaderc

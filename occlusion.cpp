@@ -14,6 +14,8 @@
 
 #include "rasterizer.h"
 
+#include "TaskScheduler.h"
+
 #include <bgfx/embedded_shader.h>
 
 // embedded shaders
@@ -24,6 +26,7 @@
 #include "fs_fullscreen.bin.h"
 
 #include <string>
+#include <thread>
 
 namespace
 {
@@ -159,6 +162,9 @@ class ExampleOcclusionCulling : public entry::AppI
 public:
     ExampleOcclusionCulling(const char* _name, const char* _description, const char* _url)
 		: entry::AppI(_name, _description, _url)
+        , m_DrawTasks(this)
+        , m_SortTasks(this)
+        , m_PushTasks(this)
 	{
 	}
 
@@ -246,6 +252,10 @@ public:
         debug_coverage = bgfx::createTexture2D(Rasterizer::g_total_width, Rasterizer::g_total_height, false, 1, bgfx::TextureFormat::R8);
 
         Rasterizer::Init();
+
+        m_Scheduler.Initialize(std::thread::hardware_concurrency()-1);
+        int workersCount = (int)m_Scheduler.GetNumTaskThreads();
+        printf("Scheduler started, %d workers\n", workersCount);
 	}
 
 	int shutdown() override
@@ -300,6 +310,80 @@ public:
 		}
 	}
 
+    struct PushTask : enki::ITaskSet
+    {
+        PushTask(ExampleOcclusionCulling* parent)
+            : m_parent(parent)
+        {
+        }
+
+        void setCount(uint32_t count)
+        {
+            this->m_SetSize = count;
+            this->m_MinRange = 1024;
+        }
+
+        void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
+        {
+            vec4_t box_min = {-1.f, -1.f, -1.f, 1.f};
+            vec4_t box_max = {+1.f, +1.f, +1.f, 1.f};
+            for (uint32_t index = range.start, wrapped_index = 0; index < range.end; ++index)
+            {
+                bool occludee = index >= m_parent->m_Visibility.size();
+                wrapped_index = occludee ? index - (uint32_t)m_parent->m_Visibility.size() : index;
+                if (occludee)
+                    m_parent->m_Visibility[wrapped_index] = 0;
+                m_parent->m_Rasterizer.push_object(MatrixSet(m_parent->m_Transforms[wrapped_index].data()),
+                                                   box_min, box_max,
+                                                   s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
+                                                   s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
+                                                   occludee ? &m_parent->m_Visibility[wrapped_index] : nullptr);
+            }
+        }
+
+        ExampleOcclusionCulling* m_parent = nullptr;
+    };
+
+    struct SortTask : enki::ITaskSet
+    {
+        SortTask(ExampleOcclusionCulling* parent)
+            : m_parent(parent)
+        {
+            this->m_SetSize = Rasterizer::g_width*Rasterizer::g_height;
+            m_sort.resize(this->m_SetSize);
+        }
+
+        void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
+        {
+            for (uint32_t index = range.start; index < range.end; ++index)
+            {
+                m_parent->m_Rasterizer.sort_triangles(index, m_sort[index]);
+            }
+        }
+
+        ExampleOcclusionCulling* m_parent = nullptr;
+        stl::vector<stl::vector<uint64_t>> m_sort;
+    };
+
+    struct DrawTask : enki::ITaskSet
+    {
+        DrawTask(ExampleOcclusionCulling* parent)
+            : m_parent(parent)
+        {
+            this->m_SetSize = Rasterizer::g_width*Rasterizer::g_height;
+        }
+
+        void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
+        {
+            for (uint32_t index = range.start; index < range.end; ++index)
+            {
+                m_parent->m_Rasterizer.draw_triangles(index);
+            }
+        }
+
+        ExampleOcclusionCulling* m_parent = nullptr;
+    };
+
 	bool update() override
 	{
 		if (!entry::processEvents(m_width, m_height, m_debug, m_reset, &m_mouseState) )
@@ -353,6 +437,8 @@ public:
             ImGui::Checkbox("Occlusion", &m_Occlusion);
             ImGui::Checkbox("Coverage", &m_ShowCoverage);
             ImGui::Checkbox("Skip full", &m_Rasterizer.m_skip_full);
+            ImGui::Checkbox("Use box", &m_UseBox);
+            ImGui::Checkbox("MT", &m_MT);
 			ImGui::SliderInt("Dim", &m_dim, 1, m_maxDim);
             ImGui::SliderFloat("Spacing", &m_Spacing, 50.f, 100.f);
 			ImGui::Text("Draw calls: %d", m_dim*m_dim*m_dim);
@@ -480,29 +566,61 @@ public:
                 vec4_t box_min = {-1.f, -1.f, -1.f, 1.f};
                 vec4_t box_max = {+1.f, +1.f, +1.f, 1.f};
 
+                m_Rasterizer.setMT(m_MT);
+
                 int64_t occlusion_start = bx::getHPCounter();
-                for (uint32_t i = 0; i < uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim); ++i )
+                uint32_t total_count = uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim);
+                if (m_MT)
                 {
-                    m_Visibility[i] = 0;
-                    m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
-                                     box_min, box_max,
-                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
-                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
-                                     &m_Visibility[i]);
-                    m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
-                                     box_min, box_max,
-                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
-                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
-                                     nullptr);
+                    m_PushTasks.setCount(total_count*2);
+                    m_Scheduler.AddTaskSetToPipe(&m_PushTasks);
+                    m_Scheduler.WaitforAll();
+                }
+                else
+                {
+                    for (uint32_t i = 0; i < total_count; ++i )
+                    {
+                        m_Visibility[i] = 0;
+                        if (m_UseBox)
+                        {
+                            m_Rasterizer.push_box(MatrixSet(m_Transforms[i].data()), &m_Visibility[i]);
+                            m_Rasterizer.push_box(MatrixSet(m_Transforms[i].data()), nullptr);
+                        }
+                        else
+                        {
+                            m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
+                                                     box_min, box_max,
+                                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
+                                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
+                                                     &m_Visibility[i]);
+                            m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
+                                                     box_min, box_max,
+                                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
+                                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
+                                                     nullptr);
+                        }
+                    }
                 }
                 int64_t occlusion_mid = bx::getHPCounter();
                 occlusion_push_time = occlusion_mid - occlusion_start;
 
                 {
                     occlusion_start = bx::getHPCounter();
-                    m_Rasterizer.sort_triangles();
+                    if (m_MT)
+                    {
+                        m_Scheduler.AddTaskSetToPipe(&m_SortTasks);
+                        m_Scheduler.WaitforAll();
+                    }
+                    else
+                        m_Rasterizer.sort_triangles();
                     occlusion_mid = bx::getHPCounter();
-                    m_Rasterizer.draw_triangles();
+                    if (m_MT)
+                    {
+                        m_Scheduler.AddTaskSetToPipe(&m_DrawTasks);
+                        m_Scheduler.WaitforAll();
+                    }
+                    else
+                        m_Rasterizer.draw_triangles();
                     int64_t occlusion_end = bx::getHPCounter();
 
                     occlusion_sort_time = occlusion_mid - occlusion_start;
@@ -564,6 +682,8 @@ public:
     bool     m_Wireframe = false;
     bool     m_Occlusion = false;
     bool     m_ShowCoverage = false;
+    bool     m_UseBox = false;
+    bool     m_MT = false;
 
     int64_t  occlusion_push_time = 0;
     int64_t  occlusion_sort_time = 0;
@@ -588,6 +708,11 @@ public:
 	bgfx::VertexBufferHandle m_vbh;
 	bgfx::IndexBufferHandle  m_ibh;
     bgfx::UniformHandle s_texColor;
+
+    enki::TaskScheduler m_Scheduler;
+    DrawTask m_DrawTasks;
+    SortTask m_SortTasks;
+    PushTask m_PushTasks;
 
     bgfx::TextureHandle debug_coverage;
 };

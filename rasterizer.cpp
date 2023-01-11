@@ -8,7 +8,7 @@ void Rasterizer::Init()
 {
 }
 
-void Rasterizer::sort_triangles(uint64_t* triangles, uint32_t size)
+void Rasterizer::sort_triangles(uint64_t* triangles, uint32_t size, stl::vector<uint64_t>& temp)
 {
 #if 0
     std::sort(triangles, triangles + size, [](uint64_t a, uint64_t b)
@@ -27,9 +27,9 @@ void Rasterizer::sort_triangles(uint64_t* triangles, uint32_t size)
     unsigned int* h2 = histograms + 256*2;
     unsigned int* h3 = histograms + 256*3;
 
-    m_sort.resize(size);
+    temp.resize(size);
 
-    uint64_t* src = triangles, *src_end = triangles + size, *dst = m_sort.data();
+    uint64_t* src = triangles, *src_end = triangles + size, *dst = temp.data();
     while (src < src_end)
     {
 #define _0(h) ((h) & 255)
@@ -87,16 +87,16 @@ void Rasterizer::sort_triangles(uint64_t* triangles, uint32_t size)
 
     if (max_bytes>3)
     {
-        RADIX_PASS(triangles, triangles + size, m_sort.data(), h0, _0);
-        RADIX_PASS(m_sort.data(), m_sort.data() + m_sort.size(), triangles, h1, _1);
-        RADIX_PASS(triangles, triangles + size, m_sort.data(), h2, _2);
-        RADIX_PASS(m_sort.data(), m_sort.data() + m_sort.size(), triangles, h3, _3);
+        RADIX_PASS(triangles, triangles + size, temp.data(), h0, _0);
+        RADIX_PASS(temp.data(), temp.data() + temp.size(), triangles, h1, _1);
+        RADIX_PASS(triangles, triangles + size, temp.data(), h2, _2);
+        RADIX_PASS(temp.data(), temp.data() + temp.size(), triangles, h3, _3);
     }
     else
     {
-        RADIX_PASS(m_sort.data(), m_sort.data() + m_sort.size(), triangles, h0, _0);
-        RADIX_PASS(triangles, triangles + size, m_sort.data(), h1, _1);
-        RADIX_PASS(m_sort.data(), m_sort.data() + m_sort.size(), triangles, h2, _2);
+        RADIX_PASS(temp.data(), temp.data() + temp.size(), triangles, h0, _0);
+        RADIX_PASS(triangles, triangles + size, temp.data(), h1, _1);
+        RADIX_PASS(temp.data(), temp.data() + temp.size(), triangles, h2, _2);
     }
 #endif
 }
