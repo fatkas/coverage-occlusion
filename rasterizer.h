@@ -103,7 +103,7 @@ private:
 
         uint64_t index = 0, tri_index = 0;
         if (m_mt)
-            index = __atomic_add_fetch(&m_triangle_count, 1, __ATOMIC_SEQ_CST) - 1;
+            index = __atomic_add_fetch(&m_triangle_count, 1, __ATOMIC_RELAXED) - 1;
         else
             index = m_triangle_count++;
         m_triangles[index] = t;
@@ -139,7 +139,7 @@ private:
                     auto & tt = m_tiles[x + y*g_width];
                     assert(tt.m_triangle_count < Tile::g_max_triangles);
                     if (m_mt)
-                        tri_index = __atomic_add_fetch(&tt.m_triangle_count, 1, __ATOMIC_SEQ_CST) - 1;
+                        tri_index = __atomic_add_fetch(&tt.m_triangle_count, 1, __ATOMIC_RELAXED) - 1;
                     else
                         tri_index = tt.m_triangle_count++;
                     assert(tri_index < Tile::g_max_triangles);
@@ -153,7 +153,7 @@ private:
             auto & tt = m_tiles[bounds_array[0] + bounds_array[1]*g_width];
             assert(tt.m_triangle_count < Tile::g_max_triangles);
             if (m_mt)
-                tri_index = __atomic_add_fetch(&tt.m_triangle_count, 1, __ATOMIC_SEQ_CST) - 1;
+                tri_index = __atomic_add_fetch(&tt.m_triangle_count, 1, __ATOMIC_RELAXED) - 1;
             else
                 tri_index = tt.m_triangle_count++;
             assert(tri_index < Tile::g_max_triangles);
@@ -743,21 +743,21 @@ public:
         ExtractMatrix(m * m_transform, matrix);
 
         if (m_mt)
-            __atomic_add_fetch(&m_triangles_total, index_count / 3, __ATOMIC_SEQ_CST);
+            __atomic_add_fetch(&m_triangles_total, index_count / 3, __ATOMIC_RELAXED);
         else
             m_triangles_total += index_count / 3;
         if (flag)
         {
             *flag = 0;
             if (m_mt)
-                __atomic_add_fetch(&m_triangles_occluder_total, index_count / 3, __ATOMIC_SEQ_CST);
+                __atomic_add_fetch(&m_triangles_occluder_total, index_count / 3, __ATOMIC_RELAXED);
             else
                 m_triangles_occluder_total += index_count / 3;
         }
         else
         {
             if (m_mt)
-                __atomic_add_fetch(&m_triangles_occludee_total, index_count / 3, __ATOMIC_SEQ_CST);
+                __atomic_add_fetch(&m_triangles_occludee_total, index_count / 3, __ATOMIC_RELAXED);
             else
                 m_triangles_occludee_total += index_count / 3;
         }
@@ -847,10 +847,10 @@ public:
         }
         if (m_mt)
         {
-            __atomic_add_fetch(&m_triangles_drawn_total, tile.m_triangles_drawn_total, __ATOMIC_SEQ_CST);
-            __atomic_add_fetch(&m_triangles_drawn_occluder_total, tile.m_triangles_drawn_occluder_total, __ATOMIC_SEQ_CST);
-            __atomic_add_fetch(&m_triangles_drawn_occludee_total, tile.m_triangles_drawn_occludee_total, __ATOMIC_SEQ_CST);
-            __atomic_add_fetch(&m_triangles_skipped, tile.m_triangles_skipped, __ATOMIC_SEQ_CST);
+            __atomic_add_fetch(&m_triangles_drawn_total, tile.m_triangles_drawn_total, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&m_triangles_drawn_occluder_total, tile.m_triangles_drawn_occluder_total, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&m_triangles_drawn_occludee_total, tile.m_triangles_drawn_occludee_total, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&m_triangles_skipped, tile.m_triangles_skipped, __ATOMIC_RELAXED);
         }
         else
         {
