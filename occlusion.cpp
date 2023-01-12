@@ -443,17 +443,15 @@ public:
             ImGui::SliderFloat("Spacing", &m_Spacing, 50.f, 100.f);
 			ImGui::Text("Draw calls: %d", m_dim*m_dim*m_dim);
             ImGui::Text("Draw calls visible: %d", visible);
-			ImGui::Text("Avg Delta Time (1 second) [ms]: %0.4f", m_deltaTimeAvgNs/1000.0f);
 
 			ImGui::Separator();
-			const bgfx::Stats* stats = bgfx::getStats();
-			ImGui::Text("GPU %0.6f [ms]", double(stats->gpuTimeEnd - stats->gpuTimeBegin)*1000.0/stats->gpuTimerFreq);
-			ImGui::Text("CPU %0.6f [ms]", double(stats->cpuTimeEnd - stats->cpuTimeBegin)*1000.0/stats->cpuTimerFreq);
-            ImGui::Text("occlusion push %0.6f [ms]", double(occlusion_push_time)*1000.0/hpFreq);
-            ImGui::Text("occlusion sort %0.6f [ms]", double(occlusion_sort_time)*1000.0/hpFreq);
-            ImGui::Text("occlusion draw %0.6f [ms]", double(occlusion_draw_time)*1000.0/hpFreq);
-			ImGui::Text("Waiting for render thread %0.6f [ms]", double(stats->waitRender) * toMs);
-			ImGui::Text("Waiting for submit thread %0.6f [ms]", double(stats->waitSubmit) * toMs);
+            if (ImGui::TreeNode("Occlusion time", "Occlusion time %f", double(occlusion_push_time + occlusion_sort_time + occlusion_draw_time)*1000.0/hpFreq))
+            {
+                ImGui::Text("occlusion push %0.6f [ms]", double(occlusion_push_time)*1000.0/hpFreq);
+                ImGui::Text("occlusion sort %0.6f [ms]", double(occlusion_sort_time)*1000.0/hpFreq);
+                ImGui::Text("occlusion draw %0.6f [ms]", double(occlusion_draw_time)*1000.0/hpFreq);
+                ImGui::TreePop();
+            }
 
             ImGui::Text("total triangles %d", m_Rasterizer.m_triangles_total);
             ImGui::Text("total occluder triangles %d", m_Rasterizer.m_triangles_occluder_total);
