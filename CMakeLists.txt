@@ -9,6 +9,9 @@ bgfx.cmake
 occlusion.cpp
 rasterizer.h
 rasterizer.cpp
+rasterizer_box.cpp
+rasterizer_sort.cpp
+rasterizer_draw.cpp
 rasterizer_math.h
 rasterizer_tile.h
 rasterizer_tile.cpp
@@ -22,7 +25,7 @@ enkiTS/src/TaskScheduler.cpp
 if(MSVC)
     add_compile_options(/W4)
 else()
-    add_compile_options(-Wall -Wextra -Wshadow -Wno-missing-field-initializers)
+    add_compile_options(-ffast-math -Wall -Wextra -Wshadow -Wno-missing-field-initializers)
 endif()
 
 include(bgfx.cmake)

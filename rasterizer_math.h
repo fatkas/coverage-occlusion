@@ -38,6 +38,9 @@ struct vec3_t
 #include <emmintrin.h>
 
 #define vec4_t __m128
+#define vec4i_t __m128i
+
+#define ALIGN16 alignas(16)
 
 struct Matrix
 {
@@ -55,6 +58,7 @@ inline vec4_t Vector4( float a )
 }
 
 #define __forceinline __attribute__((always_inline))
+#define atomic_add(a,b) __atomic_add_fetch(&a, b, __ATOMIC_RELAXED) - (b);
 
 #define VecShuffleMask(a0,b0,c0,d0) _MM_SHUFFLE(d0,c0,b0,a0)
 #define VecShuffle(a,b,mask) _mm_shuffle_ps((a),(b),mask)
@@ -67,6 +71,13 @@ inline vec4_t Vector4( float a )
 #define VecSub(a,b) _mm_sub_ps(a,b)
 #define VecMax(a,b) _mm_max_ps(a,b)
 #define VecMin(a,b) _mm_min_ps(a,b)
+#define VecOr(a,b) _mm_or_ps(a,b)
+#define VecAnd(a,b) _mm_and_ps(a,b)
+#define VecAndNot(a,b) _mm_andnot_ps(a,b)
+#define VecMask(a) _mm_movemask_ps(a)
+#define VecCmpGt(a,b) _mm_cmpgt_ps(a,b)
+#define VecCmpLt(a,b) _mm_cmplt_ps(a,b)
+#define VecCmpLe(a,b) _mm_cmple_ps(a,b)
 #define VecStore(where,what) _mm_store_ps((float*)(where),(what))
 #define VecStoreU(where,what) _mm_storeu_ps((float*)(where),(what))
 #define VecLoad(what) _mm_load_ps((const float*)(what))
@@ -93,6 +104,7 @@ inline vec4_t Vector4( float a )
 #define VecIntSLL32(a,b) _mm_sll_epi32((a),(b))
 #define VecIntCmpEqual(a,b) _mm_cmpeq_epi32((a),(b))
 #define VecIntUnpackLo(a,b) _mm_unpacklo_epi64((a),(b))
+#define VecIntMask(a) _mm_movemask_epi8(a)
 
 inline vec4_t Vector3Dotv( const vec4_t& a, const vec4_t& b )
 {

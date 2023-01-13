@@ -251,11 +251,11 @@ public:
 
         debug_coverage = bgfx::createTexture2D(Rasterizer::g_total_width, Rasterizer::g_total_height, false, 1, bgfx::TextureFormat::R8);
 
-        Rasterizer::Init();
-
         m_Scheduler.Initialize(std::thread::hardware_concurrency()-1);
         int workersCount = (int)m_Scheduler.GetNumTaskThreads();
         printf("Scheduler started, %d workers\n", workersCount);
+
+        m_Rasterizer.Init(workersCount);
 	}
 
 	int shutdown() override
@@ -287,7 +287,7 @@ public:
                 if (m_Visibility[i] == 0)
                     continue;
 
-				encoder->setTransform(m_Transforms[i].data());
+				encoder->setTransform((float*)&m_Objects[i].transform);
                 encoder->setVertexBuffer(0, m_vbh);
                 encoder->setIndexBuffer(m_ibh);
 
@@ -325,20 +325,7 @@ public:
 
         void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
         {
-            vec4_t box_min = {-1.f, -1.f, -1.f, 1.f};
-            vec4_t box_max = {+1.f, +1.f, +1.f, 1.f};
-            for (uint32_t index = range.start, wrapped_index = 0; index < range.end; ++index)
-            {
-                bool occludee = index >= m_parent->m_Visibility.size();
-                wrapped_index = occludee ? index - (uint32_t)m_parent->m_Visibility.size() : index;
-                if (occludee)
-                    m_parent->m_Visibility[wrapped_index] = 0;
-                m_parent->m_Rasterizer.push_object(MatrixSet(m_parent->m_Transforms[wrapped_index].data()),
-                                                   box_min, box_max,
-                                                   s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
-                                                   s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
-                                                   occludee ? &m_parent->m_Visibility[wrapped_index] : nullptr);
-            }
+            m_parent->m_Rasterizer.push_objects(m_parent->m_Objects.data() + range.start, range.end - range.start, thread_index);
         }
 
         ExampleOcclusionCulling* m_parent = nullptr;
@@ -350,19 +337,17 @@ public:
             : m_parent(parent)
         {
             this->m_SetSize = Rasterizer::g_width*Rasterizer::g_height;
-            m_sort.resize(this->m_SetSize);
         }
 
         void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
         {
             for (uint32_t index = range.start; index < range.end; ++index)
             {
-                m_parent->m_Rasterizer.sort_triangles(index, m_sort[index]);
+                m_parent->m_Rasterizer.sort_triangles(index, thread_index);
             }
         }
 
         ExampleOcclusionCulling* m_parent = nullptr;
-        stl::vector<stl::vector<uint64_t>> m_sort;
     };
 
     struct DrawTask : enki::ITaskSet
@@ -373,7 +358,7 @@ public:
             this->m_SetSize = Rasterizer::g_width*Rasterizer::g_height;
         }
 
-        void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
+        void ExecuteRange(enki::TaskSetPartition range, uint32_t) override
         {
             for (uint32_t index = range.start; index < range.end; ++index)
             {
@@ -467,9 +452,9 @@ public:
             {
                 for (auto & t : tiles)
                 {
-                    if (ImGui::TreeNode(std::to_string(t.m_x + t.m_y*Rasterizer::g_width).c_str(), "Tile %d (%d/%d) %s", t.m_x, (uint32_t)t.m_triangle_count, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
+                    if (ImGui::TreeNode(std::to_string(t.m_x + t.m_y*Rasterizer::g_width).c_str(), "Tile %d (%d/%d) %s", t.m_x, /*(uint32_t)t.m_triangle_count*/0, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
                     {
-                        ImGui::Text("total sorted triangles %d", (uint32_t)t.m_triangles.size());
+                        ImGui::Text("total sorted triangles %d", /*(uint32_t)t.m_triangles.size()*/0);
                         ImGui::Text("total drawn triangles %d", t.m_triangles_drawn_total);
                         ImGui::Text("total drawn occluder triangles %d", t.m_triangles_drawn_occluder_total);
                         ImGui::Text("total drawn occludee triangles %d", t.m_triangles_drawn_occludee_total);
@@ -528,8 +513,9 @@ public:
                 pos[1] = -step*m_dim / 2.0f;
                 pos[2] = -15.0;
 
-                m_Transforms.resize(m_dim*m_dim*m_dim);
-                m_Visibility.resize(m_dim*m_dim*m_dim);
+                uint32_t max_drawcalls = m_dim*m_dim*m_dim;
+                m_Objects.resize(max_drawcalls*2);
+                m_Visibility.resize(max_drawcalls);
                 for (uint32_t zz = 0; zz < uint32_t(m_dim); ++zz)
                 {
                     for (uint32_t yy = 0; yy < uint32_t(m_dim); ++yy)
@@ -550,8 +536,24 @@ public:
                             mtx[13] = pos[1] + float(yy)*step;
                             mtx[14] = pos[2] + float(zz)*step;
 
-                            m_Transforms[xx + yy*m_dim + zz*m_dim*m_dim].resize(16);
-                            memcpy(m_Transforms[xx + yy*m_dim + zz*m_dim*m_dim].data(), mtx, sizeof(mtx));
+                            uint32_t idx = xx + yy*m_dim + zz*m_dim*m_dim;
+                            m_Objects[idx].transform = MatrixSet(mtx);
+                            m_Objects[idx].indices = s_cubeIndices;
+                            m_Objects[idx].index_count = sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]);
+                            m_Objects[idx].vertices = s_cubeVerticesSIMD;
+                            m_Objects[idx].vertex_count = sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]);
+                            m_Objects[idx].visibility = &m_Visibility[xx + yy*m_dim + zz*m_dim*m_dim];
+                            m_Objects[idx].bound_min = {-1.f, -1.f, -1.f, 1.f};
+                            m_Objects[idx].bound_max = {1.f, 1.f, 1.f, 1.f};
+
+                            m_Objects[idx+max_drawcalls].transform = MatrixSet(mtx);
+                            m_Objects[idx+max_drawcalls].indices = s_cubeIndices;
+                            m_Objects[idx+max_drawcalls].index_count = sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]);
+                            m_Objects[idx+max_drawcalls].vertices = s_cubeVerticesSIMD;
+                            m_Objects[idx+max_drawcalls].vertex_count = sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]);
+                            m_Objects[idx+max_drawcalls].visibility = nullptr;
+                            m_Objects[idx+max_drawcalls].bound_min = {-1.f, -1.f, -1.f, 1.f};
+                            m_Objects[idx+max_drawcalls].bound_max = {1.f, 1.f, 1.f, 1.f};
                         }
                     }
                 }
@@ -561,43 +563,18 @@ public:
             m_Rasterizer.begin(view_mat * proj_mat * MatrixScaling(0.5f, -0.5f, 1.0f) * MatrixTranslation(Vector4( .5f, 0.5f, 0.0f, 1.0f )) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f));
             if (m_Occlusion)
             {
-                vec4_t box_min = {-1.f, -1.f, -1.f, 1.f};
-                vec4_t box_max = {+1.f, +1.f, +1.f, 1.f};
-
                 m_Rasterizer.setMT(m_MT);
 
                 int64_t occlusion_start = bx::getHPCounter();
-                uint32_t total_count = uint32_t(m_dim)*uint32_t(m_dim)*uint32_t(m_dim);
                 if (m_MT)
                 {
-                    m_PushTasks.setCount(total_count*2);
+                    m_PushTasks.setCount(m_Objects.size());
                     m_Scheduler.AddTaskSetToPipe(&m_PushTasks);
                     m_Scheduler.WaitforAll();
                 }
                 else
                 {
-                    for (uint32_t i = 0; i < total_count; ++i )
-                    {
-                        m_Visibility[i] = 0;
-                        if (m_UseBox)
-                        {
-                            m_Rasterizer.push_box(MatrixSet(m_Transforms[i].data()), &m_Visibility[i]);
-                            m_Rasterizer.push_box(MatrixSet(m_Transforms[i].data()), nullptr);
-                        }
-                        else
-                        {
-                            m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
-                                                     box_min, box_max,
-                                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
-                                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
-                                                     &m_Visibility[i]);
-                            m_Rasterizer.push_object(MatrixSet(m_Transforms[i].data()),
-                                                     box_min, box_max,
-                                                     s_cubeIndices, sizeof(s_cubeIndices) / sizeof(s_cubeIndices[0]),
-                                                     s_cubeVerticesSIMD, sizeof(s_cubeVerticesSIMD) / sizeof(s_cubeVerticesSIMD[0]),
-                                                     nullptr);
-                        }
-                    }
+                    m_Rasterizer.push_objects(m_Objects.data(), m_Objects.size());
                 }
                 int64_t occlusion_mid = bx::getHPCounter();
                 occlusion_push_time = occlusion_mid - occlusion_start;
@@ -635,7 +612,7 @@ public:
                             for ( int y = 0; y < Tile::g_tile_height; ++y )
                                 for ( int x = 0; x < Tile::g_tile_width; ++x )
                                 {
-                                    __m128i buf = m_Rasterizer.get_framebuffer(j + i*Rasterizer::g_width)[y];
+                                    vec4i_t buf = m_Rasterizer.get_framebuffer(j + i*Rasterizer::g_width)[y];
                                     unsigned int mask = ( (unsigned int*)( &buf ) )[ x >> 5 ];
                                     int bit = mask & ( 1 << ( x & 31 ) );
                                     data[j*Tile::g_tile_width + 127 - x + (y + i*Tile::g_tile_height)*Rasterizer::g_total_width] = bit ? 255 : 0;
@@ -674,8 +651,8 @@ public:
 
     float    m_Spacing = 60.f;
 
-    stl::vector<stl::vector<float>> m_Transforms;
-    stl::vector<int> m_Visibility;
+    stl::vector<Rasterizer::Object> m_Objects;
+    stl::vector<uint32_t> m_Visibility;
 
     bool     m_Wireframe = false;
     bool     m_Occlusion = false;
