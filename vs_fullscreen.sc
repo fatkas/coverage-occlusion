@@ -6,7 +6,7 @@ $output v_texcoord0
  * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
  */
 
-#include "../bgfx/examples/common/common.sh"
+#include "./bgfx/examples/common/common.sh"
 
 void main()
 {
