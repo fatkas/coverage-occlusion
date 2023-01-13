@@ -419,22 +419,22 @@ public:
 			ImGui::Separator();
 
             ImGui::Checkbox("Wireframe", &m_Wireframe);
-            ImGui::Checkbox("Occlusion", &m_Occlusion);
-            ImGui::Checkbox("Coverage", &m_ShowCoverage);
-            ImGui::Checkbox("Skip full", &m_Rasterizer.m_skip_full);
-            ImGui::Checkbox("Use box", &m_UseBox);
-            ImGui::Checkbox("MT", &m_MT);
+            ImGui::Checkbox("Enable occlusion", &m_Occlusion);
+            ImGui::Checkbox("Show coverage buffer", &m_ShowCoverage);
+            ImGui::Checkbox("Skip full tiles", &m_Rasterizer.m_skip_full);
+            ImGui::Checkbox("Use fast path for box", &m_UseBox);
+            ImGui::Checkbox("Enable MT submit/draw/push", &m_MT);
 			ImGui::SliderInt("Dim", &m_dim, 1, m_maxDim);
             ImGui::SliderFloat("Spacing", &m_Spacing, 50.f, 100.f);
 			ImGui::Text("Draw calls: %d", m_dim*m_dim*m_dim);
             ImGui::Text("Draw calls visible: %d", visible);
 
 			ImGui::Separator();
-            if (ImGui::TreeNode("Occlusion time", "Occlusion time %f", double(occlusion_push_time + occlusion_sort_time + occlusion_draw_time)*1000.0/hpFreq))
+            if (ImGui::TreeNode("Occlusion time", "Occlusion time %f", double(occlusion_push_time + occlusion_sort_time + occlusion_draw_time)*toMs))
             {
-                ImGui::Text("occlusion push %0.6f [ms]", double(occlusion_push_time)*1000.0/hpFreq);
-                ImGui::Text("occlusion sort %0.6f [ms]", double(occlusion_sort_time)*1000.0/hpFreq);
-                ImGui::Text("occlusion draw %0.6f [ms]", double(occlusion_draw_time)*1000.0/hpFreq);
+                ImGui::Text("occlusion push %0.6f [ms]", double(occlusion_push_time)*toMs);
+                ImGui::Text("occlusion sort %0.6f [ms]", double(occlusion_sort_time)*toMs);
+                ImGui::Text("occlusion draw %0.6f [ms]", double(occlusion_draw_time)*toMs);
                 ImGui::TreePop();
             }
 

@@ -109,8 +109,8 @@ __forceinline int static clip_triangle(vec4_t* v, vec4_t* dst)
     return count;
 }
 
-template <bool select_tiles> inline
-void Rasterizer::push_4triangles(TrianagleData& data, uint32_t* flag, int* bounds_array,
+template <bool select_tiles>
+__forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t* flag, int* bounds_array,
                                 vec4_t x0, vec4_t y0, vec4_t w0,
                                 vec4_t x1, vec4_t y1, vec4_t w1,
                                 vec4_t x2, vec4_t y2, vec4_t w2)
@@ -134,20 +134,21 @@ void Rasterizer::push_4triangles(TrianagleData& data, uint32_t* flag, int* bound
 
     uint32_t index = data.triangle_count++;
 
+    constexpr float z_quantizator = 64.f;
     ALIGN16 int zz[4];
     if (flag)
     {
-        vec4_t w = VecMul(VecMin(w0, VecMin(w1, w2)), Vector4(256.0f));
+        vec4_t w = VecMul(VecMin(w0, VecMin(w1, w2)), Vector4(z_quantizator));
         vec4_t ww = VecMin(VecShuffle(w, w, VecShuffleMask(0, 1, 0, 1)), VecShuffle(w, w, VecShuffleMask(2, 3, 2, 3)));
         VecIntStore(zz, VecFloat2Int(VecMin(VecShuffle(ww, ww, VecShuffleMask(0, 0, 0, 0)), VecShuffle(w, w, VecShuffleMask(1, 1, 1, 1)))));
     }
     else
     {
-        vec4_t w = VecMul(VecMax(w0, VecMax(w1, w2)), Vector4(256.0f));
+        vec4_t w = VecMul(VecMax(w0, VecMax(w1, w2)), Vector4(z_quantizator));
         vec4_t ww = VecMax(VecShuffle(w, w, VecShuffleMask(0, 1, 0, 1)), VecShuffle(w, w, VecShuffleMask(2, 3, 2, 3)));
         VecIntStore(zz, VecFloat2Int(VecMax(VecShuffle(ww, ww, VecShuffleMask(0, 0, 0, 0)), VecShuffle(w, w, VecShuffleMask(1, 1, 1, 1)))));
     }
-    assert(zz[0] >= 0 && zz[0] <= 65535*256);
+    assert(zz[0] >= 0 && zz[0] <= 65535*z_quantizator);
     t.z = zz[0];
 
     sort(t.x0, t.x1, t.y0, t.y1);
@@ -199,7 +200,7 @@ void Rasterizer::push_4triangles(TrianagleData& data, uint32_t* flag, int* bound
 }
 
 template < bool select_tiles, bool use_indices >
-inline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t* flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array)
+__forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t* flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array)
 {
     assert(( (count / 3) & 3 ) == 0);
 
@@ -210,37 +211,37 @@ inline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t* flag
         vec4_t v0_1 = src[IDX(3)];
         vec4_t v0_2 = src[IDX(6)];
         vec4_t v0_3 = src[IDX(9)];
-        vec4_t tmp0 = _mm_unpacklo_ps(v0_0, v0_1); // x0_0 x1_0 y0_0 y1_0
-        vec4_t tmp1 = _mm_unpacklo_ps(v0_2, v0_3); // x2_0 x3_0 y2_0 y3_0
-        vec4_t tmp0_0 = _mm_unpackhi_ps(v0_0, v0_1); // z0_0 z1_0 w0_0 w1_0
-        vec4_t tmp1_0 = _mm_unpackhi_ps(v0_2, v0_3); // z2_0 z3_0 w2_0 w3_0
-        vec4_t w0 = _mm_movehl_ps(tmp1_0, tmp0_0); // w0_0 w1_0 w2_0 w3_0
-        vec4_t x0 = VecMul(_mm_movelh_ps(tmp0, tmp1), VecRcp(w0));
-        vec4_t y0 = VecMul(_mm_movehl_ps(tmp1, tmp0), VecRcp(w0));
+        vec4_t tmp0 = VecUnpackLo(v0_0, v0_1); // x0_0 x1_0 y0_0 y1_0
+        vec4_t tmp1 = VecUnpackLo(v0_2, v0_3); // x2_0 x3_0 y2_0 y3_0
+        vec4_t tmp0_0 = VecUnpackHi(v0_0, v0_1); // z0_0 z1_0 w0_0 w1_0
+        vec4_t tmp1_0 = VecUnpackHi(v0_2, v0_3); // z2_0 z3_0 w2_0 w3_0
+        vec4_t w0 = VecMoveHL(tmp0_0, tmp1_0); // w0_0 w1_0 w2_0 w3_0
+        vec4_t x0 = VecMul(VecMoveLH(tmp0, tmp1), VecRcp(w0));
+        vec4_t y0 = VecMul(VecMoveHL(tmp0, tmp1), VecRcp(w0));
 
         vec4_t v1_0 = src[IDX(1)];
         vec4_t v1_1 = src[IDX(4)];
         vec4_t v1_2 = src[IDX(7)];
         vec4_t v1_3 = src[IDX(10)];
-        vec4_t tmp2 = _mm_unpacklo_ps( v1_0, v1_1 ); // x0_1 x1_1 y0_1 y1_1
-        vec4_t tmp3 = _mm_unpacklo_ps( v1_2, v1_3 ); // x2_1 x3_1 y2_1 y3_1
-        vec4_t tmp2_0 = _mm_unpackhi_ps(v1_0, v1_1);
-        vec4_t tmp3_0 = _mm_unpackhi_ps(v1_2, v1_3);
-        vec4_t w1 = _mm_movehl_ps(tmp3_0, tmp2_0); // w0_1 w1_1 w2_1 w3_1
-        vec4_t x1 = VecMul(_mm_movelh_ps(tmp2, tmp3), VecRcp(w1));
-        vec4_t y1 = VecMul(_mm_movehl_ps(tmp3, tmp2), VecRcp(w1));
+        vec4_t tmp2 = VecUnpackLo( v1_0, v1_1 ); // x0_1 x1_1 y0_1 y1_1
+        vec4_t tmp3 = VecUnpackLo( v1_2, v1_3 ); // x2_1 x3_1 y2_1 y3_1
+        vec4_t tmp2_0 = VecUnpackHi(v1_0, v1_1);
+        vec4_t tmp3_0 = VecUnpackHi(v1_2, v1_3);
+        vec4_t w1 = VecMoveHL(tmp2_0, tmp3_0); // w0_1 w1_1 w2_1 w3_1
+        vec4_t x1 = VecMul(VecMoveLH(tmp2, tmp3), VecRcp(w1));
+        vec4_t y1 = VecMul(VecMoveHL(tmp2, tmp3), VecRcp(w1));
 
         vec4_t v2_0 = src[IDX(2)];
         vec4_t v2_1 = src[IDX(5)];
         vec4_t v2_2 = src[IDX(8)];
         vec4_t v2_3 = src[IDX(11)];
-        vec4_t tmp4 = _mm_unpacklo_ps(v2_0, v2_1); // x0_2 x1_2 y0_2 y1_2
-        vec4_t tmp5 = _mm_unpacklo_ps(v2_2, v2_3); // x2_2 x3_2 y2_2 y3_2
-        vec4_t tmp4_0 = _mm_unpackhi_ps(v2_0, v2_1);
-        vec4_t tmp5_0 = _mm_unpackhi_ps(v2_2, v2_3);
-        vec4_t w2 = _mm_movehl_ps(tmp5_0, tmp4_0); // w0_2 w1_2 w2_2 w3_2
-        vec4_t x2 = VecMul(_mm_movelh_ps(tmp4, tmp5), VecRcp(w2));
-        vec4_t y2 = VecMul(_mm_movehl_ps(tmp5, tmp4), VecRcp(w2));
+        vec4_t tmp4 = VecUnpackLo(v2_0, v2_1); // x0_2 x1_2 y0_2 y1_2
+        vec4_t tmp5 = VecUnpackLo(v2_2, v2_3); // x2_2 x3_2 y2_2 y3_2
+        vec4_t tmp4_0 = VecUnpackHi(v2_0, v2_1);
+        vec4_t tmp5_0 = VecUnpackHi(v2_2, v2_3);
+        vec4_t w2 = VecMoveHL(tmp4_0, tmp5_0); // w0_2 w1_2 w2_2 w3_2
+        vec4_t x2 = VecMul(VecMoveLH(tmp4, tmp5), VecRcp(w2));
+        vec4_t y2 = VecMul(VecMoveHL(tmp4, tmp5), VecRcp(w2));
         #undef IDX
 
         push_4triangles<select_tiles>(data, flag, bounds_array, x0, y0, w0, x1, y1, w1, x2, y2, w2);
@@ -305,17 +306,17 @@ void Rasterizer::push_object_clipped(ThreadData& thread_data, const vec4_t* matr
     push_triangle_batched<select_tiles, false>(thread_data.data, flag, clipped_triangles, clipped_triangle_count*3, 0, bounds_array);
 }
 
-bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array)
+__forceinline bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array)
 {
     vec4_t g_total_width_v = Vector4(g_total_width);
     vec4_t g_total_height_v = Vector4(g_total_height);
 
-    vec4_t pt[ 4 ];
-    vec4_t vTmp = _mm_unpacklo_ps(v_min, v_max);                // x, X, y, Y
-    pt[0] = VecShuffle(v_min, v_max, VecShuffleMask( 0, 0, 0, 0)); // xxXX
-    pt[1] = VecShuffle(vTmp, vTmp, VecShuffleMask( 2, 3, 2, 3)); // yYyY
-    pt[2] = VecShuffle(v_min, v_min, VecShuffleMask( 2, 2, 2, 2)); // zzzz
-    pt[3] = VecShuffle(v_max, v_max, VecShuffleMask( 2, 2, 2, 2)); // ZZZZ
+    vec4_t pt[4];
+    vec4_t vTmp = VecUnpackLo(v_min, v_max);                // x, X, y, Y
+    pt[0] = VecShuffle(v_min, v_max, VecShuffleMask(0, 0, 0, 0)); // xxXX
+    pt[1] = VecShuffle(vTmp, vTmp, VecShuffleMask(2, 3, 2, 3)); // yYyY
+    pt[2] = VecShuffle(v_min, v_min, VecShuffleMask(2, 2, 2, 2)); // zzzz
+    pt[3] = VecShuffle(v_max, v_max, VecShuffleMask(2, 2, 2, 2)); // ZZZZ
 
     vec4_t xxxx0 = VecMad(m[8], pt[2], VecMad(m[4], pt[1], VecMad(m[0], pt[0], m[12])));
     vec4_t yyyy0 = VecMad(m[9], pt[2], VecMad(m[5], pt[1], VecMad(m[1], pt[0], m[13])));
@@ -409,7 +410,7 @@ bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int
 
 __forceinline vec4_t Rasterizer::get_tile_bounds( vec4_t v_min, vec4_t v_max )
 {
-    vec4_t minmax = _mm_movelh_ps(v_min, v_max); // xyXY
+    vec4_t minmax = VecMoveLH(v_min, v_max); // xyXY
     vec4_t tile_bounds = VecMul(minmax, m_tile_size); // x/w y/h X/w Y/h
     tile_bounds = VecAdd(tile_bounds, m_almost_one);
     return VecMax(VecMin(tile_bounds, m_tile_bounds), VecZero());

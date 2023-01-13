@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.0)
 
+set(CMAKE_XCODE_ATTRIBUTE_ARCHS "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
+set(CMAKE_OSX_ARCHITECTURES "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
+
 project(coverage-occlusion VERSION 0.18 LANGUAGES CXX)
 
 SET(CMAKE_CONFIGURATION_TYPES Debug Release)
@@ -13,6 +16,8 @@ rasterizer_box.cpp
 rasterizer_sort.cpp
 rasterizer_draw.cpp
 rasterizer_math.h
+rasterizer_math_sse.inl
+rasterizer_math_neon.inl
 rasterizer_tile.h
 rasterizer_tile.cpp
 )

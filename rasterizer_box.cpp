@@ -36,16 +36,16 @@ void Rasterizer::push_box(const Matrix& mat, int* flag)
     vec4_t zzzz1 = VecMad(m[10], pt[3], VecMad(m[6], pt[1], VecMad(m[2], pt[0], m[14])));
     vec4_t wwww1 = VecMad(m[11], pt[3], VecMad(m[7], pt[1], VecMad(m[3], pt[0], m[15])));
 
-    vec4_t v_mask00 = _mm_and_ps(_mm_cmpgt_ps(xxxx0, _mm_setzero_ps()), _mm_cmpgt_ps(xxxx1, _mm_setzero_ps()));
-    vec4_t v_mask01 = _mm_and_ps(_mm_cmpgt_ps(yyyy0, _mm_setzero_ps()), _mm_cmpgt_ps(yyyy1, _mm_setzero_ps()));
-    vec4_t v_mask10 = _mm_and_ps(_mm_cmplt_ps(xxxx0, _mm_mul_ps(wwww0, g_total_width_v)), _mm_cmplt_ps(xxxx1, _mm_mul_ps(wwww1, g_total_width_v )));
-    vec4_t v_mask11 = _mm_and_ps(_mm_cmplt_ps(yyyy0, _mm_mul_ps(wwww0, g_total_height_v)), _mm_cmplt_ps(yyyy1, _mm_mul_ps(wwww1, g_total_height_v)));
+    vec4_t v_mask00 = VecAnd(VecCmpGt(xxxx0, VecZero()), VecCmpGt(xxxx1, VecZero()));
+    vec4_t v_mask01 = VecAnd(VecCmpGt(yyyy0, VecZero()), VecCmpGt(yyyy1, VecZero()));
+    vec4_t v_mask10 = VecAnd(VecCmpLt(xxxx0, VecMul(wwww0, g_total_width_v)), VecCmpLt(xxxx1, VecMul(wwww1, g_total_width_v )));
+    vec4_t v_mask11 = VecAnd(VecCmpLt(yyyy0, VecMul(wwww0, g_total_height_v)), VecCmpLt(yyyy1, VecMul(wwww1, g_total_height_v)));
 
-    vec4_t v_mask0 = _mm_and_ps(v_mask00, v_mask10);
-    vec4_t v_mask1 = _mm_and_ps(v_mask01, v_mask11);
-    int mask = _mm_movemask_ps(_mm_and_ps(v_mask0, v_mask1));
+    vec4_t v_mask0 = VecAnd(v_mask00, v_mask10);
+    vec4_t v_mask1 = VecAnd(v_mask01, v_mask11);
+    int mask = VecMask(VecAnd(v_mask0, v_mask1));
 
-    bool intersect_near = _mm_movemask_ps(_mm_and_ps(_mm_cmpgt_ps(zzzz0, _mm_setzero_ps()), _mm_cmpgt_ps(zzzz1, _mm_setzero_ps()))) != 15;
+    bool intersect_near = VecMask(VecAnd(VecCmpGt(zzzz0, VecZero()), VecCmpGt(zzzz1, VecZero()))) != 15;
 
     // fast path, no clipping
     if (mask == 15 && intersect_near == false)
@@ -55,16 +55,16 @@ void Rasterizer::push_box(const Matrix& mat, int* flag)
         vec4_t xx1 = VecMul(xxxx1, VecRcp(wwww1));
         vec4_t yy1 = VecMul(yyyy1, VecRcp(wwww1));
 
-        vec4_t x_min = _mm_min_ps(xx0, xx1);
-        vec4_t x_max = _mm_max_ps(xx0, xx1);
-        vec4_t y_min = _mm_min_ps(yy0, yy1);
-        vec4_t y_max = _mm_max_ps(yy0, yy1);
+        vec4_t x_min = VecMin(xx0, xx1);
+        vec4_t x_max = VecMax(xx0, xx1);
+        vec4_t y_min = VecMin(yy0, yy1);
+        vec4_t y_max = VecMax(yy0, yy1);
 
-        vec4_t min_0 = _mm_min_ps(VecShuffle(x_min, y_min, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_min, y_min, VecShuffleMask(2, 3, 2, 3)));
-        vec4_t max_0 = _mm_max_ps(VecShuffle(x_max, y_max, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_max, y_max, VecShuffleMask(2, 3, 2, 3)));
+        vec4_t min_0 = VecMin(VecShuffle(x_min, y_min, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_min, y_min, VecShuffleMask(2, 3, 2, 3)));
+        vec4_t max_0 = VecMax(VecShuffle(x_max, y_max, VecShuffleMask(0, 1, 0, 1)), VecShuffle(x_max, y_max, VecShuffleMask(2, 3, 2, 3)));
 
-        vec4_t min_1 = _mm_min_ps(VecShuffle(min_0, min_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(min_0, min_0, VecShuffleMask(1, 3, 0, 0)));
-        vec4_t max_1 = _mm_max_ps(VecShuffle(max_0, max_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(max_0, max_0, VecShuffleMask(1, 3, 0, 0)));
+        vec4_t min_1 = VecMin(VecShuffle(min_0, min_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(min_0, min_0, VecShuffleMask(1, 3, 0, 0)));
+        vec4_t max_1 = VecMax(VecShuffle(max_0, max_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(max_0, max_0, VecShuffleMask(1, 3, 0, 0)));
         VecIntStore(bounds_array, VecFloat2Int(get_tile_bounds(min_1, max_1)));
 
         bool fast_path = bounds_array[0] + 1 == bounds_array[2] && bounds_array[1] + 1 == bounds_array[3];
@@ -89,12 +89,12 @@ void Rasterizer::push_box(const Matrix& mat, int* flag)
         }
         {
             // 2 7 0 5   7 2 5 0   3 6 1 4
-            vec4_t xtmp0 = _mm_movehl_ps(xx1, xx0); // 2 3 6 7
-            vec4_t xtmp1 = _mm_movelh_ps(xx0, xx1); // 0 1 4 5
-            vec4_t ytmp0 = _mm_movehl_ps(yy1, yy0); // 2 3 6 7
-            vec4_t ytmp1 = _mm_movelh_ps(yy0, yy1); // 0 1 4 5
-            vec4_t wtmp0 = _mm_movehl_ps(wwww1, wwww0); // 2 3 6 7
-            vec4_t wtmp1 = _mm_movelh_ps(wwww0, wwww1); // 0 1 4 5
+            vec4_t xtmp0 = VecMoveHL(xx0, xx1); // 2 3 6 7
+            vec4_t xtmp1 = VecMoveLH(xx0, xx1); // 0 1 4 5
+            vec4_t ytmp0 = VecMoveHL(yy0, yy1); // 2 3 6 7
+            vec4_t ytmp1 = VecMoveLH(yy0, yy1); // 0 1 4 5
+            vec4_t wtmp0 = VecMoveHL(wwww0, wwww1); // 2 3 6 7
+            vec4_t wtmp1 = VecMoveLH(wwww0, wwww1); // 0 1 4 5
 
             vec4_t x0 = VecShuffle(xtmp0, xtmp1, VecShuffleMask(0, 3, 0, 3));
             vec4_t y0 = VecShuffle(ytmp0, ytmp1, VecShuffleMask(0, 3, 0, 3));
@@ -115,12 +115,12 @@ void Rasterizer::push_box(const Matrix& mat, int* flag)
         }
         {
             // 1 6 0 7   6 1 3 4   2 5 7 0
-            vec4_t xtmp0 = _mm_movelh_ps(VecShuffle(xx0, xx0, VecShuffleMask(1, 2, 1, 2)), VecShuffle(xx1, xx1, VecShuffleMask(1, 2, 1, 2))); // 1 2 5 6
-            vec4_t xtmp1 = _mm_movelh_ps(VecShuffle(xx0, xx0, VecShuffleMask(0, 3, 0, 3)), VecShuffle(xx1, xx1, VecShuffleMask(3, 0, 3, 0))); // 0 3 7 4
-            vec4_t ytmp0 = _mm_movelh_ps(VecShuffle(yy0, yy0, VecShuffleMask(1, 2, 1, 2)), VecShuffle(yy1, yy1, VecShuffleMask(1, 2, 1, 2))); // 1 2 5 6
-            vec4_t ytmp1 = _mm_movelh_ps(VecShuffle(yy0, yy0, VecShuffleMask(0, 3, 0, 3)), VecShuffle(yy1, yy1, VecShuffleMask(3, 0, 3, 0))); // 0 3 7 4
-            vec4_t wtmp0 = _mm_movelh_ps(VecShuffle(wwww0, wwww0, VecShuffleMask(1, 2, 1, 2)), VecShuffle(wwww1, wwww1, VecShuffleMask(1, 2, 1, 2))); // 1 2 5 6
-            vec4_t wtmp1 = _mm_movelh_ps(VecShuffle(wwww0, wwww0, VecShuffleMask(0, 3, 0, 3)), VecShuffle(wwww1, wwww1, VecShuffleMask(3, 0, 3, 0))); // 0 3 7 4
+            vec4_t xtmp0 = VecMoveLH(VecShuffle(xx0, xx0, VecShuffleMask(1, 2, 1, 2)), VecShuffle(xx1, xx1, VecShuffleMask(1, 2, 1, 2))); // 1 2 5 6
+            vec4_t xtmp1 = VecMoveLH(VecShuffle(xx0, xx0, VecShuffleMask(0, 3, 0, 3)), VecShuffle(xx1, xx1, VecShuffleMask(3, 0, 3, 0))); // 0 3 7 4
+            vec4_t ytmp0 = VecMoveLH(VecShuffle(yy0, yy0, VecShuffleMask(1, 2, 1, 2)), VecShuffle(yy1, yy1, VecShuffleMask(1, 2, 1, 2))); // 1 2 5 6
+            vec4_t ytmp1 = VecMoveLH(VecShuffle(yy0, yy0, VecShuffleMask(0, 3, 0, 3)), VecShuffle(yy1, yy1, VecShuffleMask(3, 0, 3, 0))); // 0 3 7 4
+            vec4_t wtmp0 = VecMoveLH(VecShuffle(wwww0, wwww0, VecShuffleMask(1, 2, 1, 2)), VecShuffle(wwww1, wwww1, VecShuffleMask(1, 2, 1, 2))); // 1 2 5 6
+            vec4_t wtmp1 = VecMoveLH(VecShuffle(wwww0, wwww0, VecShuffleMask(0, 3, 0, 3)), VecShuffle(wwww1, wwww1, VecShuffleMask(3, 0, 3, 0))); // 0 3 7 4
 
             vec4_t x0 = VecShuffle(xtmp0, xtmp1, VecShuffleMask(0, 3, 0, 2));
             vec4_t y0 = VecShuffle(ytmp0, ytmp1, VecShuffleMask(0, 3, 0, 2));
