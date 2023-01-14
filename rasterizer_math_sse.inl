@@ -2,6 +2,7 @@
 
 #include <xmmintrin.h>
 #include <emmintrin.h>
+#include <smmintrin.h>
 
 #define vec4_t __m128
 #define vec4i_t __m128i
@@ -72,5 +73,8 @@ inline vec4_t Vector4( float a )
 #define VecIntSLL64(a,b) _mm_sll_epi64((a),(b))
 #define VecIntSLL32(a,b) _mm_sll_epi32((a),(b))
 #define VecIntCmpEqual(a,b) _mm_cmpeq_epi32((a),(b))
-#define VecIntUnpackLo(a,b) _mm_unpacklo_epi64((a),(b))
+#define VecIntUnpackLo(a,b) _mm_unpacklo_epi16((a),(b))
+#define VecIntUnpackHi(a,b) _mm_unpackhi_epi16((a),(b))
 #define VecIntMask(a) _mm_movemask_epi8(a)
+#define VecInt2Float(a) _mm_cvtepi32_ps(a)
+#define VecIntPack16(a,b) _mm_packus_epi32(a,b)

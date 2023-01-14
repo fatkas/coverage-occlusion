@@ -103,9 +103,9 @@ __forceinline inline void Vector3TransformCoord4(const vec4_t* m, const vec4_t* 
     vec4_t yyyy = VecMoveHL(tmp0, tmp2); // y0 y1 y2 y3
     vec4_t zzzz = VecMoveLH(tmp1, tmp3); // z0 z1 z2 z3
 
-    vec4_t tx = VecAdd(VecAdd(VecAdd(m[12], VecMul(zzzz, m[8])), VecMul(yyyy, m[4])), VecMul(xxxx, m[0]));
-    vec4_t ty = VecAdd(VecAdd(VecAdd(m[13], VecMul(zzzz, m[9])), VecMul(yyyy, m[5])), VecMul(xxxx, m[1]));
-    vec4_t tw = VecAdd(VecAdd(VecAdd(m[15], VecMul(zzzz, m[11])), VecMul(yyyy, m[7])), VecMul(xxxx, m[3]));
+    vec4_t tx = VecMad(m[ 8], zzzz, VecMad(m[4], yyyy, VecMad(m[0], xxxx, m[12])));
+    vec4_t ty = VecMad(m[ 9], zzzz, VecMad(m[5], yyyy, VecMad(m[1], xxxx, m[13])));
+    vec4_t tw = VecMad(m[11], zzzz, VecMad(m[7], yyyy, VecMad(m[3], xxxx, m[15])));
 
 	tmp0 = VecDiv(VecUnpackLo(tx, ty), VecShuffle(tw, tw, VecShuffleMask(0, 0, 1, 1))); // x0 y0 x1 y1
 	tmp1 = VecDiv(VecUnpackHi(tx, ty), VecShuffle(tw, tw, VecShuffleMask(2, 2, 3, 3))); // x2 y2 x3 y3
@@ -129,10 +129,10 @@ __forceinline inline void Vector3TransformCoord4Homogeneous(const vec4_t* m, con
     vec4_t yyyy = VecMoveHL(tmp0, tmp2); // y0 y1 y2 y3
     vec4_t zzzz = VecMoveLH(tmp1, tmp3); // z0 z1 z2 z3
 
-    vec4_t tx = VecAdd(VecAdd(VecAdd(m[12], VecMul(zzzz, m[8])), VecMul(yyyy, m[4])), VecMul(xxxx, m[0]));
-    vec4_t ty = VecAdd(VecAdd(VecAdd(m[13], VecMul(zzzz, m[9])), VecMul(yyyy, m[5])), VecMul(xxxx, m[1]));
-    vec4_t tz = VecAdd(VecAdd(VecAdd(m[14], VecMul(zzzz, m[10])), VecMul(yyyy, m[6])), VecMul(xxxx, m[2]));
-    vec4_t tw = VecAdd(VecAdd(VecAdd(m[15], VecMul(zzzz, m[11])), VecMul(yyyy, m[7])), VecMul(xxxx, m[3]));
+    vec4_t tx = VecMad(m[ 8], zzzz, VecMad(m[4], yyyy, VecMad(m[0], xxxx, m[12])));
+    vec4_t ty = VecMad(m[ 9], zzzz, VecMad(m[5], yyyy, VecMad(m[1], xxxx, m[13])));
+    vec4_t tz = VecMad(m[10], zzzz, VecMad(m[6], yyyy, VecMad(m[2], xxxx, m[14])));
+    vec4_t tw = VecMad(m[11], zzzz, VecMad(m[7], yyyy, VecMad(m[3], xxxx, m[15])));
 
 	tmp0 = VecUnpackLo(tx, ty); // x0 y0 x1 y1
 	tmp1 = VecUnpackHi(tx, ty); // x2 y2 x3 y3

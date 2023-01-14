@@ -16,10 +16,28 @@ struct ALIGN16 Triangle
     // y123
 	vec4_t x0, x1, x2;
     vec4_t y0, y1, y2;
-    uint32_t* flag;
-    uint32_t z;
+    uint32_t flag;
     uint32_t mask;
 };
+static_assert(sizeof(Triangle) == 112, "this is important");
+
+// 52 bytes per 4 triangles, 13 bytes per triangle
+struct TrianglePacked
+{
+    // 24 bytes
+    uint16_t x0[4];
+    uint16_t x1[4];
+    uint16_t x2[4];
+
+    // 24 bytes
+    uint16_t y0[4];
+    uint16_t y1[4];
+    uint16_t y2[4];
+
+    uint32_t flag : 28;
+    uint32_t mask : 4;
+};
+static_assert(sizeof(TrianglePacked) == 52, "this is important");
 
 struct ALIGN16 Tile
 {

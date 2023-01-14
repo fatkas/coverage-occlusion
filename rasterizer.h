@@ -9,12 +9,22 @@
 
 #include <bx/uint32_t.h>
 
+#define USE_PACKED_TRIANGLES 1
+
 struct ALIGN16 Rasterizer
 {
-	static constexpr int g_width = 6;
+    static constexpr int g_width = 6;
     static constexpr int g_height = 12;
-	static constexpr int g_total_width = g_width * Tile::g_tile_width;
-	static constexpr int g_total_height = g_height * Tile::g_tile_height;
+    static constexpr int g_total_width = g_width * Tile::g_tile_width;
+    static constexpr int g_total_height = g_height * Tile::g_tile_height;
+
+#if USE_PACKED_TRIANGLES
+    typedef TrianglePacked TriangleType;
+    static constexpr int g_fixed_point_bits = 6;
+#else
+    typedef Triangle TriangleType;
+    static constexpr int g_fixed_point_bits = 16;
+#endif
 
     struct SortKey
     {
@@ -30,22 +40,23 @@ struct ALIGN16 Rasterizer
             SortKey*              triangle_index_data = nullptr;
             uint32_t              triangle_index_count = 0;
         };
-        stl::vector<Triangle>       triangles;
-        Triangle*                   triangle_data = nullptr;
-        uint32_t                    triangle_count = 0;
-        TileData                    tiles[g_width*g_height];
+        stl::vector<TriangleType> triangles;
+        TriangleType*             triangle_data = nullptr;
+        uint32_t                  triangle_count = 0;
+        TileData                  tiles[g_width*g_height];
     };
 
     struct ThreadData
     {
-        TrianagleData       data;
-        stl::vector<vec4_t> vertices;
+        TrianagleData        data;
+        stl::vector<vec4_t>  vertices;
+        stl::vector<SortKey> sort;
 
         void clear();
     };
 private:
 
-	Matrix			        m_transform;
+    Matrix			        m_transform;
     vec4i_t                 m_full_span;
     vec4_t                  m_tile_size;
     vec4_t                  m_almost_one;
@@ -54,23 +65,23 @@ private:
     ThreadData              m_data;
     stl::vector<Tile>       m_tiles;
     stl::vector<ThreadData> m_thread_data;
+    stl::vector<uint32_t*>  m_flags;
+    uint32_t                m_flag_count = 1;
 
     bool                    m_mt = false;
 
     template <bool select_tiles>
-    inline void push_4triangles(TrianagleData& data, uint32_t* flag, int* bounds_array,
-                                vec4_t x0, vec4_t y0, vec4_t w0,
-                                vec4_t x1, vec4_t y1, vec4_t w1,
-                                vec4_t x2, vec4_t y2, vec4_t w2);
+    inline void push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
+                                const vec4_t* x, const vec4_t* y, const vec4_t* w);
 
     template < bool select_tiles, bool use_indices >
-    inline void push_triangle_batched(TrianagleData& data, uint32_t* flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array);
+    inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array);
 
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
 
     template < bool select_tiles >
     void push_object_clipped(ThreadData& data, const vec4_t* matrix, const uint16_t* indices, int index_count,
-                             const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t* flag);
+                             const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t flag);
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
 
@@ -80,8 +91,9 @@ private:
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 
     template < bool is_occluder >
-    __forceinline void draw_4triangles(Tile& tile, const Triangle& tri);
+    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags);
 
+    void flush_thread_data(ThreadData& thread_data);
 public:
 
     struct Object

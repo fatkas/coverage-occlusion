@@ -181,3 +181,19 @@ inline int VecIntMask(vec4i_t a)
     uint8x16_t paired64 = vsraq_n_u64(paired32, paired32, 28);
     return vgetq_lane_u8(paired64, 0) | ((int) vgetq_lane_u8(paired64, 8) << 8);
 }
+inline vec4i_t VecIntUnpackLo(vec4i_t a, vec4i_t b)
+{
+    return vzip1q_s16(a, b);
+}
+inline vec4i_t VecIntUnpackHi(vec4i_t a, vec4i_t b)
+{
+    return vzip2q_s16(a, b);
+}
+inline vec4_t VecInt2Float(vec4i_t a)
+{
+    return vcvtq_f32_s32(a);
+}
+inline vec4i_t VecIntPack16(vec4i_t a, vec4i_t b)
+{
+    return vcombine_u16(vqmovun_s32(a), vqmovun_s32(b));
+}

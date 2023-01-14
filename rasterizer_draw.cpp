@@ -1,5 +1,6 @@
 
 #include "rasterizer.h"
+#include "rasterizer_math.h"
 
 template <bool is_occluder> __forceinline
 bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag)
@@ -7,8 +8,8 @@ bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, 
     assert((is_occluder && !flag) || (flag && !is_occluder));
     for (int scanline = y1; scanline < y2; ++scanline)
     {
-        int xb = xs1 >> 16;
-        int xe = xs2 >> 16;
+        int xb = xs1 >> g_fixed_point_bits;
+        int xe = xs2 >> g_fixed_point_bits;
         xs1 += xa1;
         xs2 += xa2;
 
@@ -35,10 +36,34 @@ bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, 
 }
 
 template < bool is_occluder >
-__forceinline void Rasterizer::draw_4triangles(Tile& tile, const Triangle& tri)
+__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags)
 {
+#if USE_PACKED_TRIANGLES
+    vec4_t quantizer = Vector4(1.f/(1<<g_fixed_point_bits));
+
+    vec4i_t x0x1 = VecIntLoad(tri.x0);
+    vec4i_t x2y0 = VecIntLoad(tri.x2);
+    vec4i_t y1y2 = VecIntLoad(tri.y1);
+
+    vec4i_t lo = VecIntUnpackLo(x0x1, VecIntZero());
+    vec4i_t hi = VecIntUnpackHi(x0x1, VecIntZero());
+    vec4_t x0 = VecInt2Float(lo);
+    vec4_t x1 = VecInt2Float(hi);
+    lo = VecIntUnpackLo(x2y0, VecIntZero());
+    hi = VecIntUnpackHi(x2y0, VecIntZero());
+    vec4_t x2 = VecInt2Float(lo);
+    vec4_t y0 = VecMul(VecInt2Float(hi), quantizer);
+    lo = VecIntUnpackLo(y1y2, VecIntZero());
+    hi = VecIntUnpackHi(y1y2, VecIntZero());
+    vec4_t y1 = VecMul(VecInt2Float(lo), quantizer);
+    vec4_t y2 = VecMul(VecInt2Float(hi), quantizer);
+
+    vec4_t vx0 = x0, vx1 = x1, vx2 = x2;
+    vec4_t vy0 = y0, vy1 = y1, vy2 = y2;
+#else
     vec4_t vx0 = tri.x0, vx1 = tri.x1, vx2 = tri.x2;
     vec4_t vy0 = tri.y0, vy1 = tri.y1, vy2 = tri.y2;
+#endif
 
     ALIGN16 int iy0[4], iy1[4], iy2[4], ix0[4], ix1[4], ix2[4], dx1[4], dx2[4], dx3[4];
 
@@ -89,9 +114,9 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const Triangle& tri)
             tile.m_triangles_drawn_occludee_total++;
 
         int xs1 = ix0[i], xs2 = ix1[i], xs3 = ix2[i];
-        if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], tile.m_shifts.data(), tri.flag))
+        if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], tile.m_shifts.data(), flags[tri.flag]))
             return;
-        if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], tile.m_shifts.data(), tri.flag))
+        if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], tile.m_shifts.data(), flags[tri.flag]))
             return;
     }
 }
@@ -103,7 +128,8 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
 
     assert(tile_indices.triangle_index_count <= m_data.data.triangle_count);
     const SortKey* tri = tile_indices.triangle_index_data, *tri_end = tri + tile_indices.triangle_index_count;
-    const Triangle* tri_data = m_data.data.triangle_data;
+    const TriangleType* tri_data = m_data.data.triangle_data;
+    uint32_t** flags = m_flags.data();
     while (tri != tri_end)
     {
         assert(tri->index < m_data.data.triangle_count);
@@ -111,14 +137,14 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
         auto & triangle = tri_data[key.index];
         if (triangle.flag)
         {
-            if (m_skip_full && *triangle.flag)
+            if (m_skip_full && *flags[triangle.flag])
                 tile.m_triangles_skipped += bx::uint32_cntbits(triangle.mask);
             else
-                draw_4triangles<false>(tile, triangle);
+                draw_4triangles<false>(tile, triangle, flags);
         }
         else
         {
-            draw_4triangles<true>(tile, triangle);
+            draw_4triangles<true>(tile, triangle, flags);
             if (m_skip_full && tile.m_mask == ~0u)
             {
                 while (tri != tri_end)

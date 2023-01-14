@@ -156,7 +156,7 @@ void Rasterizer::sort_triangles(uint32_t tile_index, uint32_t thread_index)
 {
     auto & tile = m_data.data.tiles[tile_index];
     if (tile.triangle_index_count)
-        sort_triangles(tile.triangle_index_data, tile.triangle_index_count, m_thread_data[thread_index].data.tiles[tile_index].triangle_indices);
+        sort_triangles(tile.triangle_index_data, tile.triangle_index_count, m_thread_data[thread_index].sort);
 }
 
 void Rasterizer::sort_triangles()
