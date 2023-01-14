@@ -159,18 +159,19 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
     if (flag)
     {
         vec4_t ww = VecMul(VecMin(w[0], VecMin(w[1], w[2])), Vector4(z_quantizator));
-        vec4_t www = VecMin(VecShuffle(ww, ww, VecShuffleMask(0, 1, 0, 1)), VecShuffle(ww, ww, VecShuffleMask(2, 3, 2, 3)));
-        VecIntStore(zz, VecFloat2Int(VecMin(VecShuffle(www, www, VecShuffleMask(0, 0, 0, 0)), VecShuffle(www, www, VecShuffleMask(1, 1, 1, 1)))));
+        vec4_t www = VecMin(ww, VecShuffle(ww, ww, VecShuffleMask(2, 3, 2, 3)));
+        VecIntStore(zz, VecFloat2Int(VecMin(www, VecShuffle(www, www, VecShuffleMask(1, 1, 1, 1)))));
     }
     else
     {
         vec4_t ww = VecMul(VecMax(w[0], VecMax(w[1], w[2])), Vector4(z_quantizator));
-        vec4_t www = VecMax(VecShuffle(ww, ww, VecShuffleMask(0, 1, 0, 1)), VecShuffle(ww, ww, VecShuffleMask(2, 3, 2, 3)));
-        VecIntStore(zz, VecFloat2Int(VecMax(VecShuffle(www, www, VecShuffleMask(0, 0, 0, 0)), VecShuffle(www, www, VecShuffleMask(1, 1, 1, 1)))));
+        vec4_t www = VecMax(ww, VecShuffle(ww, ww, VecShuffleMask(2, 3, 2, 3)));
+        VecIntStore(zz, VecFloat2Int(VecMax(www, VecShuffle(www, www, VecShuffleMask(1, 1, 1, 1)))));
     }
     assert(zz[0] >= 0 && zz[0] <= 65535*z_quantizator);
     uint32_t z = zz[0];
 
+    ALIGN16 int transformed_bounds[4];
     if ( select_tiles )
     {
         vec4_t x_min = VecMin(x[0], VecMin(x[1], x[2]));
@@ -185,34 +186,24 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
         vec4_t max_1 = VecMax(VecShuffle(max_0, max_0, VecShuffleMask(0, 2, 0, 0)), VecShuffle(max_0, max_0, VecShuffleMask(1, 3, 0, 0)));
 
         vec4_t tile_bound = get_tile_bounds(min_1, max_1);
-
-        ALIGN16 int transformed_bounds[4];
         VecIntStore(transformed_bounds, VecFloat2Int( tile_bound ));
         assert(transformed_bounds[0] >= bounds_array[0]);
         assert(transformed_bounds[1] >= bounds_array[1]);
         assert(transformed_bounds[2] <= bounds_array[2]);
         assert(transformed_bounds[3] <= bounds_array[3]);
 
-        for (int yy = transformed_bounds[1]; yy < transformed_bounds[3]; ++yy)
-            for (int xx = transformed_bounds[0]; xx < transformed_bounds[2]; ++xx)
-            {
-                uint32_t tile_index = xx + yy*g_width;
-                assert(xx < g_width);
-                assert(yy < g_height);
-                auto & tile = data.tiles[tile_index];
-                assert(tile.triangle_index_count < tile.triangle_indices.size());
-                tile.triangle_index_data[tile.triangle_index_count++] = {z, index};
-            }
+        bounds_array = transformed_bounds;
     }
-    else
-    {
-        uint32_t tile_index = bounds_array[0] + bounds_array[1]*g_width;
-        assert(bounds_array[0] < g_width);
-        assert(bounds_array[1] < g_height);
-        auto & tile = data.tiles[tile_index];
-        assert(tile.triangle_index_count < tile.triangle_indices.size());
-        tile.triangle_index_data[tile.triangle_index_count++] = {z, index};
-    }
+    for (int yy = bounds_array[1]; yy < bounds_array[3]; ++yy)
+        for (int xx = bounds_array[0]; xx < bounds_array[2]; ++xx)
+        {
+            uint32_t tile_index = xx + yy*g_width;
+            assert(xx < g_width);
+            assert(yy < g_height);
+            auto & tile = data.tiles[tile_index];
+            assert(tile.triangle_index_count < tile.triangle_indices.size());
+            tile.triangle_index_data[tile.triangle_index_count++] = {z, index};
+        }
 }
 
 template <bool use_indices>
@@ -305,7 +296,7 @@ void Rasterizer::push_object_clipped(ThreadData& thread_data, const vec4_t* matr
     push_triangle_batched<select_tiles, false>(thread_data.data, flag, clipped_triangles, clipped_triangle_count*3, 0, bounds_array);
 }
 
-__forceinline bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array)
+bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array)
 {
     vec4_t g_total_width_v = Vector4(g_total_width);
     vec4_t g_total_height_v = Vector4(g_total_height);
@@ -353,7 +344,7 @@ __forceinline bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec
     }
     else
     {
-#define INTERSECT_EDGE(a,b,c) VecAdd(b, VecMul(VecSub(a, b), t))
+#define INTERSECT_EDGE(a,b,c) VecMad(VecSub(a, b), t, b)
         vec4_t xxxx0_1 = VecShuffle(xxxx0, xxxx0, VecShuffleMask(1, 3, 0, 2));
         vec4_t yyyy0_1 = VecShuffle(yyyy0, yyyy0, VecShuffleMask(1, 3, 0, 2));
         vec4_t zzzz0_1 = VecShuffle(zzzz0, zzzz0, VecShuffleMask(1, 3, 0, 2));
@@ -410,8 +401,7 @@ __forceinline bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec
 __forceinline vec4_t Rasterizer::get_tile_bounds( vec4_t v_min, vec4_t v_max )
 {
     vec4_t minmax = VecMoveLH(v_min, v_max); // xyXY
-    vec4_t tile_bounds = VecMul(minmax, m_tile_size); // x/w y/h X/w Y/h
-    tile_bounds = VecAdd(tile_bounds, m_almost_one);
+    vec4_t tile_bounds = VecMad(minmax, m_tile_size, m_almost_one);
     return VecMax(VecMin(tile_bounds, m_tile_bounds), VecZero());
 }
 
@@ -559,6 +549,15 @@ static uint32_t InitThreadData(Rasterizer::ThreadData& data, uint32_t max_4trian
     return total_mem;
 }
 
+inline static int Shift( int val )
+{
+    if( val > 31 )
+        return 0;
+    if( val < 0 )
+        return 0xffffffff;
+    return 0xffffffff >> val;
+}
+
 void Rasterizer::Init(uint32_t num_threads)
 {
     uint32_t total_mem = 0, thread_mem = 0, main_data = 0;
@@ -570,6 +569,17 @@ void Rasterizer::Init(uint32_t num_threads)
             m_tiles.push_back(Tile(i, j));
             total_mem += sizeof(Tile) + m_tiles.back().m_shifts.size()*sizeof(vec4i_t);
         }
+
+    m_masks.resize(g_width*g_max_masks_per_tile);
+    for (int tile = 0; tile < g_width; ++tile)
+    {
+        for (int i = 0; i < tile*128; ++i)
+            m_masks[tile*g_max_masks_per_tile + i] = Vector4Int(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff);
+        for (int i = (tile+1)*128; i < g_max_masks_per_tile; ++i)
+            m_masks[tile*g_max_masks_per_tile + i] = VecIntZero();
+        for (int i = 0; i < 128; ++i)
+            m_masks[tile*g_max_masks_per_tile + tile*128 + i] = Vector4Int(Shift(i - 96), Shift(i - 64), Shift(i - 32), Shift(i));
+    }
 
     m_full_span = Vector4Int(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff);
 

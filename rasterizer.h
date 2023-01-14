@@ -17,6 +17,7 @@ struct ALIGN16 Rasterizer
     static constexpr int g_height = 12;
     static constexpr int g_total_width = g_width * Tile::g_tile_width;
     static constexpr int g_total_height = g_height * Tile::g_tile_height;
+    static constexpr int g_max_masks_per_tile = g_width * Tile::g_tile_width; // should match max x
 
 #if USE_PACKED_TRIANGLES
     typedef TrianglePacked TriangleType;
@@ -66,6 +67,7 @@ private:
     stl::vector<Tile>       m_tiles;
     stl::vector<ThreadData> m_thread_data;
     stl::vector<uint32_t*>  m_flags;
+    stl::vector<vec4i_t>    m_masks;
     uint32_t                m_flag_count = 1;
 
     bool                    m_mt = false;
@@ -91,7 +93,7 @@ private:
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 
     template < bool is_occluder >
-    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags);
+    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags, const vec4i_t* masks);
 
     void flush_thread_data(ThreadData& thread_data);
 public:
@@ -108,7 +110,7 @@ public:
         uint32_t* visibility = nullptr;
     };
 
-    bool        m_skip_full = false;
+    bool        m_skip_full = true;
     uint32_t    m_triangles_total = 0;
     uint32_t    m_triangles_occluder_total = 0;
     uint32_t    m_triangles_occludee_total = 0;

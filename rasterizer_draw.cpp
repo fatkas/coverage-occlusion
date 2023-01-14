@@ -36,7 +36,7 @@ bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, 
 }
 
 template < bool is_occluder >
-__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags)
+__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags, const vec4i_t* masks)
 {
 #if USE_PACKED_TRIANGLES
     vec4_t quantizer = Vector4(1.f/(1<<g_fixed_point_bits));
@@ -114,9 +114,9 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& t
             tile.m_triangles_drawn_occludee_total++;
 
         int xs1 = ix0[i], xs2 = ix1[i], xs3 = ix2[i];
-        if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], tile.m_shifts.data(), flags[tri.flag]))
+        if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], masks, flags[tri.flag]))
             return;
-        if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], tile.m_shifts.data(), flags[tri.flag]))
+        if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], masks, flags[tri.flag]))
             return;
     }
 }
@@ -130,6 +130,7 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
     const SortKey* tri = tile_indices.triangle_index_data, *tri_end = tri + tile_indices.triangle_index_count;
     const TriangleType* tri_data = m_data.data.triangle_data;
     uint32_t** flags = m_flags.data();
+    vec4i_t* masks = m_masks.data();
     while (tri != tri_end)
     {
         assert(tri->index < m_data.data.triangle_count);
@@ -140,11 +141,11 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
             if (m_skip_full && *flags[triangle.flag])
                 tile.m_triangles_skipped += bx::uint32_cntbits(triangle.mask);
             else
-                draw_4triangles<false>(tile, triangle, flags);
+                draw_4triangles<false>(tile, triangle, flags, masks + tile.m_x*g_max_masks_per_tile);
         }
         else
         {
-            draw_4triangles<true>(tile, triangle, flags);
+            draw_4triangles<true>(tile, triangle, flags, masks + tile.m_x*g_max_masks_per_tile);
             if (m_skip_full && tile.m_mask == ~0u)
             {
                 while (tri != tri_end)

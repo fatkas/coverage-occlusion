@@ -655,7 +655,7 @@ public:
     stl::vector<uint32_t> m_Visibility;
 
     bool     m_Wireframe = false;
-    bool     m_Occlusion = false;
+    bool     m_Occlusion = true;
     bool     m_ShowCoverage = false;
     bool     m_UseBox = false;
     bool     m_MT = false;
