@@ -45,7 +45,6 @@ struct ALIGN16 Tile
     static constexpr int    g_tile_width = 128;
 
     vec4i_t                 m_frame_buffer[g_tile_height];
-    stl::vector<vec4i_t>    m_shifts;
     uint64_t                m_mask = 0;
     uint32_t                m_triangles_drawn_total = 0;
     uint32_t                m_triangles_drawn_occluder_total = 0;

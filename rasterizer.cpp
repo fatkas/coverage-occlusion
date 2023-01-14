@@ -239,16 +239,9 @@ __forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_
 }
 
 template < bool select_tiles >
-void Rasterizer::push_object_clipped(ThreadData& thread_data, const vec4_t* matrix, const uint16_t* indices, int index_count,
-                                     const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t flag)
+void Rasterizer::push_object_clipped(ThreadData& thread_data, const uint16_t* indices, int index_count,
+                                     const vec4_t* transformed_vertices, int vertex_count, int* bounds_array, uint32_t flag)
 {
-    vec4_t* transformed_vertices = thread_data.vertices.data();
-
-    size_t aligned_count = (vertex_count + 3 ) & ~3;
-    assert(aligned_count < thread_data.vertices.size());
-    for (size_t i = 0; i < aligned_count; i += 4)
-        Vector3TransformCoord4Homogeneous(matrix, vertices + i, transformed_vertices + i);
-
     assert(index_count >= 12);
 
     constexpr uint32_t max_triangles_in_object = 1024;
@@ -407,6 +400,8 @@ __forceinline vec4_t Rasterizer::get_tile_bounds( vec4_t v_min, vec4_t v_max )
 
 void Rasterizer::flush_thread_data(ThreadData& thread_data)
 {
+    assert(m_mt);
+
     // copy back triangles & indices
     uint32_t triangle_offset = 0;
     if (thread_data.data.triangle_count)
@@ -451,21 +446,27 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
     ALIGN16 int bounds_array[4] = { 0 };
     vec4_t matrix[ 16 ];
 
+#if USE_STATS
     uint32_t triangles_total = 0;
     uint32_t triangles_occluder_total = 0;
     uint32_t triangles_occludee_total = 0;
     uint32_t triangles_offscreen = 0;
+#endif
     for (uint32_t idx = 0; idx < object_count; ++idx)
     {
         auto & obj = objects[idx];
 
         ExtractMatrix(obj.transform * m_transform, matrix);
 
+#if USE_STATS
         triangles_total += obj.index_count / 3;
         if (obj.visibility)
-            *obj.visibility = 0, triangles_occludee_total += obj.index_count / 3;
+            triangles_occludee_total += obj.index_count / 3;
         else
             triangles_occluder_total += obj.index_count / 3;
+#endif
+        if (obj.visibility)
+            *obj.visibility = 0;
 
         uint32_t flag = obj.visibility ? flags_start + idx : 0;
         flag_data[flag] = (uint32_t*)obj.visibility;
@@ -473,7 +474,9 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
         bool inside = occlude_object(matrix, obj.bound_min, obj.bound_max, bounds_array);
         if ( bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3] )
         {
+#if USE_STATS
             triangles_offscreen += obj.index_count / 3;
+#endif
             continue;
         }
 
@@ -483,15 +486,15 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
         else
             assert(thread_data.data.triangle_count + triangles_4count <= thread_data.data.triangles.size());
 
+        vec4_t* transformed_vertices = thread_data.vertices.data();
+
+        size_t aligned_count = (obj.vertex_count + 3) & ~3;
+        assert(aligned_count < thread_data.vertices.size());
+        for (size_t i = 0; i < aligned_count; i += 4)
+            Vector3TransformCoord4Homogeneous(matrix, obj.vertices + i, transformed_vertices + i);
+
         if (inside)
         {
-            vec4_t* transformed_vertices = thread_data.vertices.data();
-
-            size_t aligned_count = (obj.vertex_count + 3) & ~3;
-            assert(aligned_count < thread_data.vertices.size());
-            for (size_t i = 0; i < aligned_count; i += 4)
-                Vector3TransformCoord4Homogeneous( matrix, obj.vertices + i, transformed_vertices + i );
-
             if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
                 push_triangle_batched<false, true>(thread_data.data, flag, transformed_vertices, obj.index_count, obj.indices, bounds_array );
             else
@@ -500,27 +503,31 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
         else
         {
             if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-                push_object_clipped<false>(thread_data, matrix, obj.indices, obj.index_count, obj.vertices, obj.vertex_count, bounds_array, flag);
+                push_object_clipped<false>(thread_data, obj.indices, obj.index_count, transformed_vertices, obj.vertex_count, bounds_array, flag);
             else
-                push_object_clipped<true>(thread_data, matrix, obj.indices, obj.index_count, obj.vertices, obj.vertex_count, bounds_array, flag);
+                push_object_clipped<true>(thread_data, obj.indices, obj.index_count, transformed_vertices, obj.vertex_count, bounds_array, flag);
         }
     }
 
     if (m_mt)
     {
+#if USE_STATS
         atomic_add(m_triangles_total, triangles_total);
         atomic_add(m_triangles_offscreen, triangles_offscreen);
         atomic_add(m_triangles_occludee_total, triangles_occludee_total);
         atomic_add(m_triangles_occluder_total, triangles_occluder_total);
+#endif
 
         flush_thread_data(thread_data);
     }
     else
     {
+#if USE_STATS
         m_triangles_total += triangles_total;
         m_triangles_offscreen += triangles_offscreen;
         m_triangles_occludee_total += triangles_occludee_total;
         m_triangles_occluder_total += triangles_occluder_total;
+#endif
     }
 }
 
@@ -567,7 +574,6 @@ void Rasterizer::Init(uint32_t num_threads)
         for (int i = 0; i < g_width; ++i)
         {
             m_tiles.push_back(Tile(i, j));
-            total_mem += sizeof(Tile) + m_tiles.back().m_shifts.size()*sizeof(vec4i_t);
         }
 
     m_masks.resize(g_width*g_max_masks_per_tile);
@@ -584,7 +590,7 @@ void Rasterizer::Init(uint32_t num_threads)
     m_full_span = Vector4Int(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff);
 
     constexpr uint32_t max_4triangles = 384 * 1024, max4_triangles_thread = 1024;
-    constexpr uint32_t max_triangle_indices = 48*1024, max_triangle_indices_thread = 1024;
+    constexpr uint32_t max_triangle_indices = 48*1024, max_triangle_indices_thread = max4_triangles_thread;
     main_data = InitThreadData(m_data, max_4triangles, max_triangle_indices);
 
     assert(num_threads >= 1);

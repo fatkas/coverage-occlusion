@@ -10,11 +10,12 @@
 #include <bx/uint32_t.h>
 
 #define USE_PACKED_TRIANGLES 1
+#define USE_STATS 0
 
 struct ALIGN16 Rasterizer
 {
-    static constexpr int g_width = 6;
-    static constexpr int g_height = 12;
+    static constexpr int g_width = 8;
+    static constexpr int g_height = 20;
     static constexpr int g_total_width = g_width * Tile::g_tile_width;
     static constexpr int g_total_height = g_height * Tile::g_tile_height;
     static constexpr int g_max_masks_per_tile = g_width * Tile::g_tile_width; // should match max x
@@ -82,7 +83,7 @@ private:
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
 
     template < bool select_tiles >
-    void push_object_clipped(ThreadData& data, const vec4_t* matrix, const uint16_t* indices, int index_count,
+    void push_object_clipped(ThreadData& data, const uint16_t* indices, int index_count,
                              const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t flag);
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
@@ -93,7 +94,7 @@ private:
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 
     template < bool is_occluder >
-    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags, const vec4i_t* masks);
+    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t* flags, const vec4i_t* masks);
 
     void flush_thread_data(ThreadData& thread_data);
 public:

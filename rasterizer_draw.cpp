@@ -36,7 +36,7 @@ bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, 
 }
 
 template < bool is_occluder >
-__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t** flags, const vec4i_t* masks)
+__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t* flag, const vec4i_t* masks)
 {
 #if USE_PACKED_TRIANGLES
     vec4_t quantizer = Vector4(1.f/(1<<g_fixed_point_bits));
@@ -98,25 +98,27 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& t
 
         assert(iy0[i] <= 32);
         assert(iy2[i] <= 32);
-        uint32_t span0 = 0xffffffff << iy0[i];
-        uint32_t span1 = 0xffffffff >> (32-iy2[i]);
-        uint32_t span = span0 & span1;
+        uint32_t span = (0xffffffff << iy0[i]) & (0xffffffff >> (Tile::g_tile_height - iy2[i]));
         if (m_skip_full && (tile.m_mask & span) == span)
         {
+#if USE_STATS
             ++tile.m_triangles_skipped;
+#endif
             continue;
         }
 
+#if USE_STATS
         tile.m_triangles_drawn_total++;
         if (is_occluder)
             tile.m_triangles_drawn_occluder_total++;
         else
             tile.m_triangles_drawn_occludee_total++;
+#endif
 
         int xs1 = ix0[i], xs2 = ix1[i], xs3 = ix2[i];
-        if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], masks, flags[tri.flag]))
+        if (draw_scanlines<is_occluder>(tile, xs1, xs2, iy0[i], iy1[i], dx1[i], dx2[i], masks, flag))
             return;
-        if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], masks, flags[tri.flag]))
+        if (draw_scanlines<is_occluder>(tile, xs1, xs3, iy1[i], iy2[i], dx1[i], dx3[i], masks, flag))
             return;
     }
 }
@@ -130,7 +132,7 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
     const SortKey* tri = tile_indices.triangle_index_data, *tri_end = tri + tile_indices.triangle_index_count;
     const TriangleType* tri_data = m_data.data.triangle_data;
     uint32_t** flags = m_flags.data();
-    vec4i_t* masks = m_masks.data();
+    vec4i_t* masks = m_masks.data() + tile.m_x*g_max_masks_per_tile;
     while (tri != tri_end)
     {
         assert(tri->index < m_data.data.triangle_count);
@@ -138,25 +140,33 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
         auto & triangle = tri_data[key.index];
         if (triangle.flag)
         {
-            if (m_skip_full && *flags[triangle.flag])
+            uint32_t* flag = flags[triangle.flag];
+            if (*flag)
+            {
+#if USE_STATS
                 tile.m_triangles_skipped += bx::uint32_cntbits(triangle.mask);
-            else
-                draw_4triangles<false>(tile, triangle, flags, masks + tile.m_x*g_max_masks_per_tile);
+#endif
+                continue;
+            }
+            draw_4triangles<false>(tile, triangle, flag, masks);
         }
         else
         {
-            draw_4triangles<true>(tile, triangle, flags, masks + tile.m_x*g_max_masks_per_tile);
+            draw_4triangles<true>(tile, triangle, flags[0], masks);
             if (m_skip_full && tile.m_mask == ~0u)
             {
+#if USE_STATS
                 while (tri != tri_end)
                 {
                     auto & lkey = *tri++;
                     tile.m_triangles_skipped += bx::uint32_cntbits(tri_data[lkey.index].mask);
                 }
+#endif
                 break;
             }
         }
     }
+#if USE_STATS
     if (m_mt)
     {
         atomic_add(m_triangles_drawn_total, tile.m_triangles_drawn_total);
@@ -171,6 +181,7 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
         m_triangles_drawn_occludee_total += tile.m_triangles_drawn_occludee_total;
         m_triangles_skipped += tile.m_triangles_skipped;
     }
+#endif
 }
 
 void Rasterizer::draw_triangles()
