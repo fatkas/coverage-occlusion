@@ -8,6 +8,8 @@ set(CMAKE_XCODE_ATTRIBUTE_DEPLOYMENT_POSTPROCESSING "NO")
 project(coverage-occlusion VERSION 0.18 LANGUAGES CXX)
 
 SET(CMAKE_CONFIGURATION_TYPES Debug Release)
+enable_language(C)
+enable_language(CXX)
 
 set(SOURCES
 bgfx.cmake

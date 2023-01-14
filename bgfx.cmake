@@ -128,7 +128,3 @@ target_include_directories(bgfx-static PRIVATE
   ${BGFX_ROOT_DIR}/bgfx/3rdparty/khronos
   ${BGFX_ROOT_DIR}/bgfx/src/
 )
-
-set_source_files_properties(${BGFX_ROOT_DIR}/bimg/3rdparty/tinyexr/deps/miniz/miniz.c
-    PROPERTIES LANGUAGE C
-)

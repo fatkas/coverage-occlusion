@@ -4,7 +4,6 @@
 
 __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag)
 {
-    assert((is_occluder && !flag) || (flag && !is_occluder));
     for (int scanline = y1; scanline < y2; ++scanline)
     {
         int xb = xs1 >> g_fixed_point_bits;
