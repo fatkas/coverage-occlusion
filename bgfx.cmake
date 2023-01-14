@@ -39,7 +39,7 @@ set(BGFX_SOURCES
 
   ${BGFX_ROOT_DIR}/bgfx/3rdparty/meshoptimizer/src/indexcodec.cpp
   ${BGFX_ROOT_DIR}/bgfx/3rdparty/meshoptimizer/src/vertexcodec.cpp
-  ${BGFX_ROOT_DIR}/bgfx/examples/common/Camera.cpp
+  ${BGFX_ROOT_DIR}/bgfx/examples/common/camera.cpp
   ${BGFX_ROOT_DIR}/bgfx/examples/common/bgfx_utils.cpp
   ${BGFX_ROOT_DIR}/bgfx/examples/common/example-glue.cpp
   ${BGFX_ROOT_DIR}/bgfx/examples/common/entry/cmd.cpp
