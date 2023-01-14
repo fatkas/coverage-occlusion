@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.0)
 
 set(CMAKE_XCODE_ATTRIBUTE_ARCHS "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
 set(CMAKE_OSX_ARCHITECTURES "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
+set(CMAKE_XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf")
+set(CMAKE_XCODE_ATTRIBUTE_DEPLOYMENT_POSTPROCESSING "NO")
 
 project(coverage-occlusion VERSION 0.18 LANGUAGES CXX)
 
@@ -30,7 +32,7 @@ enkiTS/src/TaskScheduler.cpp
 if(MSVC)
     add_compile_options(/W4)
 else()
-    add_compile_options(-ffast-math -Wall -Wextra -Wshadow -Wno-missing-field-initializers)
+    add_compile_options(-g -ffast-math -Wall -Wextra -Wshadow -Wno-missing-field-initializers)
 endif()
 
 include(bgfx.cmake)
@@ -55,6 +57,10 @@ else()
     "-framework AppKit"
     "-framework Cocoa"
     "-framework IOKit"
+  )
+  set_target_properties(demo
+                      PROPERTIES
+                      XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH "YES"
   )
 endif()
 
