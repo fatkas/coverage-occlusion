@@ -101,17 +101,16 @@ __forceinline int static clip_triangle(vec4_t* v, vec4_t* dst)
 
     int count = 4;
     vec4_t input_array[196], output_array[196];
-    count = clip_triangle< 1, false >(v, count, input_array, VecZero()); // y < 0
-    count = clip_triangle< 0, false >(input_array, count, output_array, VecZero()); // x < 0
-    count = clip_triangle< 0, true >(output_array, count, input_array, g_total_width_v); // x > 1280
-    count = clip_triangle< 2, false >(input_array, count, output_array, VecZero()); // z < 0
-    count = clip_triangle< 1, true >(output_array, count, dst, g_total_height_v); // y > 720
+    count = clip_triangle<1, false>(v, count, input_array, VecZero()); // y < 0
+    count = clip_triangle<0, false>(input_array, count, output_array, VecZero()); // x < 0
+    count = clip_triangle<0, true>(output_array, count, input_array, g_total_width_v); // x > 1280
+    count = clip_triangle<2, false>(input_array, count, output_array, VecZero()); // z < 0
+    count = clip_triangle<1, true>(output_array, count, dst, g_total_height_v); // y > 720
     return count;
 }
 
-template <bool select_tiles>
 __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
-                                               const vec4_t* x, const vec4_t* y, const vec4_t* w)
+                                               const vec4_t* x, const vec4_t* y, const vec4_t* w, bool select_tiles)
 {
     const vec4_t local_fixed_point = Vector4(1<<g_fixed_point_bits);
     vec4_t x0 = VecMul(x[0], local_fixed_point);
@@ -172,7 +171,7 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
     uint32_t z = zz[0];
 
     ALIGN16 int transformed_bounds[4];
-    if ( select_tiles )
+    if (select_tiles)
     {
         vec4_t x_min = VecMin(x[0], VecMin(x[1], x[2]));
         vec4_t x_max = VecMax(x[0], VecMax(x[1], x[2]));
@@ -206,8 +205,7 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
         }
 }
 
-template <bool use_indices>
-__forceinline void load_4vertices(vec4_t& x, vec4_t& y, vec4_t& w, const vec4_t* src, const unsigned short* indices, uint32_t base_index)
+__forceinline void load_4vertices(vec4_t& x, vec4_t& y, vec4_t& w, const vec4_t* src, const uint16_t* indices, uint32_t base_index, bool use_indices)
 {
 #define IDX(num)(use_indices ? indices[base_index + num] : base_index + num)
     vec4_t v0_0 = src[IDX(0)];
@@ -224,23 +222,22 @@ __forceinline void load_4vertices(vec4_t& x, vec4_t& y, vec4_t& w, const vec4_t*
 #undef IDX
 }
 
-template <bool select_tiles, bool use_indices>
-__forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array)
+__forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t flag, const vec4_t* src, int count, const uint16_t* indices,
+                                                     int* bounds_array, bool select_tiles, bool use_indices)
 {
     assert(( (count / 3) & 3 ) == 0);
     for ( int i = 0; i < count; i += 12 )
     {
         vec4_t x[3], y[3], w[3];
-        load_4vertices<use_indices>(x[0], y[0], w[0], src, indices, i + 0);
-        load_4vertices<use_indices>(x[1], y[1], w[1], src, indices, i + 1);
-        load_4vertices<use_indices>(x[2], y[2], w[2], src, indices, i + 2);
-        push_4triangles<select_tiles>(data, flag, bounds_array, x, y, w);
+        load_4vertices(x[0], y[0], w[0], src, indices, i + 0, use_indices);
+        load_4vertices(x[1], y[1], w[1], src, indices, i + 1, use_indices);
+        load_4vertices(x[2], y[2], w[2], src, indices, i + 2, use_indices);
+        push_4triangles(data, flag, bounds_array, x, y, w, select_tiles);
     }
 }
 
-template < bool select_tiles >
 void Rasterizer::push_object_clipped(ThreadData& thread_data, const uint16_t* indices, int index_count,
-                                     const vec4_t* transformed_vertices, int vertex_count, int* bounds_array, uint32_t flag)
+                                     const vec4_t* transformed_vertices, int vertex_count, int* bounds_array, uint32_t flag, bool select_tiles)
 {
     assert(index_count >= 12);
 
@@ -286,7 +283,7 @@ void Rasterizer::push_object_clipped(ThreadData& thread_data, const uint16_t* in
         clipped_triangles[ clipped_triangle_count*3 + 1 ] = v1;
         clipped_triangles[ clipped_triangle_count*3 + 2 ] = v2;
     }
-    push_triangle_batched<select_tiles, false>(thread_data.data, flag, clipped_triangles, clipped_triangle_count*3, 0, bounds_array);
+    push_triangle_batched(thread_data.data, flag, clipped_triangles, clipped_triangle_count*3, 0, bounds_array, select_tiles, false);
 }
 
 bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array)
@@ -472,7 +469,7 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
         flag_data[flag] = (uint32_t*)obj.visibility;
 
         bool inside = occlude_object(matrix, obj.bound_min, obj.bound_max, bounds_array);
-        if ( bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3] )
+        if (bounds_array[0] == bounds_array[2] || bounds_array[1] == bounds_array[3])
         {
 #if USE_STATS
             triangles_offscreen += obj.index_count / 3;
@@ -493,20 +490,11 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
         for (size_t i = 0; i < aligned_count; i += 4)
             Vector3TransformCoord4Homogeneous(matrix, obj.vertices + i, transformed_vertices + i);
 
+        bool select_tiles = !(bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3]);
         if (inside)
-        {
-            if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-                push_triangle_batched<false, true>(thread_data.data, flag, transformed_vertices, obj.index_count, obj.indices, bounds_array );
-            else
-                push_triangle_batched<true, true>(thread_data.data, flag, transformed_vertices, obj.index_count, obj.indices, bounds_array );
-        }
+            push_triangle_batched(thread_data.data, flag, transformed_vertices, obj.index_count, obj.indices, bounds_array, select_tiles, true);
         else
-        {
-            if ( bounds_array[0] + 2 > bounds_array[2] && bounds_array[1] + 2 > bounds_array[3] )
-                push_object_clipped<false>(thread_data, obj.indices, obj.index_count, transformed_vertices, obj.vertex_count, bounds_array, flag);
-            else
-                push_object_clipped<true>(thread_data, obj.indices, obj.index_count, transformed_vertices, obj.vertex_count, bounds_array, flag);
-        }
+            push_object_clipped(thread_data, obj.indices, obj.index_count, transformed_vertices, obj.vertex_count, bounds_array, flag, select_tiles);
     }
 
     if (m_mt)

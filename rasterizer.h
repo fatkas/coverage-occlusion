@@ -73,27 +73,23 @@ private:
 
     bool                    m_mt = false;
 
-    template <bool select_tiles>
     inline void push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
-                                const vec4_t* x, const vec4_t* y, const vec4_t* w);
+                                const vec4_t* x, const vec4_t* y, const vec4_t* w, bool select_tiles);
 
-    template < bool select_tiles, bool use_indices >
-    inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec4_t* src, int count, const unsigned short* indices, int* bounds_array);
+    inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec4_t* src, int count, const uint16_t* indices,
+                                      int* bounds_array, bool select_tiles, bool use_indices);
 
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
 
-    template < bool select_tiles >
     void push_object_clipped(ThreadData& data, const uint16_t* indices, int index_count,
-                             const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t flag);
+                             const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t flag, bool select_tiles);
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
 
     __forceinline vec4_t get_tile_bounds( vec4_t v_min, vec4_t v_max );
 
-    template <bool is_occluder>
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 
-    template < bool is_occluder >
     __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t* flags, const vec4i_t* masks);
 
     void flush_thread_data(ThreadData& thread_data);
