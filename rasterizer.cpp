@@ -131,13 +131,10 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
     assert(data.triangle_count < data.triangles.size());
     TriangleType & t = data.triangle_data[data.triangle_count];
 
-    t.mask = mask;
-    t.flag = flag;
 #if USE_PACKED_TRIANGLES
     vec4i_t x0x1 = VecIntPack16(VecFloat2Int(x0), VecFloat2Int(x1));
     vec4i_t x2y0 = VecIntPack16(VecFloat2Int(x2), VecFloat2Int(VecMul(y0, local_fixed_point)));
     vec4i_t y1y2 = VecIntPack16(VecFloat2Int(VecMul(y1, local_fixed_point)), VecFloat2Int(VecMul(y2, local_fixed_point)));
-
 
     VecIntStore(t.x0, x0x1);
     VecIntStore(t.x2, x2y0);
@@ -167,7 +164,7 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
         vec4_t www = VecMax(ww, VecShuffle(ww, ww, VecShuffleMask(2, 3, 2, 3)));
         VecIntStore(zz, VecFloat2Int(VecMax(www, VecShuffle(www, www, VecShuffleMask(1, 1, 1, 1)))));
     }
-    assert(zz[0] >= 0 && zz[0] <= 65535*z_quantizator);
+    assert(zz[0] >= 0 && zz[0] < 65535*z_quantizator);
     uint32_t z = zz[0];
 
     ALIGN16 int transformed_bounds[4];
@@ -193,6 +190,11 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
 
         bounds_array = transformed_bounds;
     }
+    SortKey key;
+    key.z = z;
+    key.mask = mask;
+    key.index = index;
+    key.flag = flag;
     for (int yy = bounds_array[1]; yy < bounds_array[3]; ++yy)
         for (int xx = bounds_array[0]; xx < bounds_array[2]; ++xx)
         {
@@ -201,11 +203,11 @@ __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t fla
             assert(yy < g_height);
             auto & tile = data.tiles[tile_index];
             assert(tile.triangle_index_count < tile.triangle_indices.size());
-            tile.triangle_index_data[tile.triangle_index_count++] = {z, index};
+            tile.triangle_index_data[tile.triangle_index_count++] = key;
         }
 }
 
-__forceinline void load_4vertices(vec4_t& x, vec4_t& y, vec4_t& w, const vec4_t* src, const uint16_t* indices, uint32_t base_index, bool use_indices)
+__forceinline void load_4vertices(vec4_t& x, vec4_t& y, vec4_t& w, const RESTRICT vec4_t* src, const RESTRICT uint16_t* indices, uint32_t base_index, bool use_indices)
 {
 #define IDX(num)(use_indices ? indices[base_index + num] : base_index + num)
     vec4_t v0_0 = src[IDX(0)];
@@ -412,7 +414,11 @@ void Rasterizer::flush_thread_data(ThreadData& thread_data)
         uint32_t offset = atomic_add(m_data.data.tiles[tile_index].triangle_index_count, tile.triangle_index_count);
         assert(offset + tile.triangle_index_count <= m_data.data.tiles[tile_index].triangle_indices.size());
         for (uint32_t i = 0; i < tile.triangle_index_count; ++i)
-            m_data.data.tiles[tile_index].triangle_index_data[offset + i] = {tile.triangle_index_data[i].z, tile.triangle_index_data[i].index + triangle_offset};
+        {
+            auto & key = tile.triangle_index_data[i];
+            key.index += triangle_offset;
+            m_data.data.tiles[tile_index].triangle_index_data[offset + i] = key;
+        }
     }
     thread_data.clear();
 }

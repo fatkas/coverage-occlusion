@@ -30,10 +30,10 @@ __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, in
             }
         }
     }
-    return false;
+    return tile.m_mask == ~0u;
 }
 
-__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t* flag, const vec4i_t* masks)
+__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t tri_mask, RESTRICT uint32_t* flag, RESTRICT const vec4i_t* masks)
 {
 #if USE_PACKED_TRIANGLES
     vec4_t quantizer = Vector4(1.f/(1<<g_fixed_point_bits));
@@ -90,7 +90,7 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& t
 
     for (size_t i = 0, mask = 1; i < 4; ++i, mask <<= 1)
     {
-        if ((tri.mask & mask ) == 0)
+        if ((tri_mask & mask ) == 0)
             continue;
 
         assert(iy0[i] <= 32);
@@ -125,6 +125,9 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
     auto & tile = m_tiles[tile_index];
     auto & tile_indices = m_data.data.tiles[tile_index];
 
+    if (tile_indices.triangle_index_count == 0)
+        return;
+
     assert(tile_indices.triangle_index_count <= m_data.data.triangle_count);
     const SortKey* tri = tile_indices.triangle_index_data, *tri_end = tri + tile_indices.triangle_index_count;
     const TriangleType* tri_data = m_data.data.triangle_data;
@@ -136,22 +139,22 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
         auto & key = *tri++;
         auto & triangle = tri_data[key.index];
 
-        uint32_t* flag = triangle.flag ? flags[triangle.flag] : nullptr;
-        if (triangle.flag && *flag)
+        uint32_t* flag = key.flag ? flags[key.flag] : nullptr;
+        if (key.flag && *flag)
         {
 #if USE_STATS
-            tile.m_triangles_skipped += bx::uint32_cntbits(triangle.mask);
+            tile.m_triangles_skipped += bx::uint32_cntbits(key.mask);
 #endif
             continue;
         }
-        draw_4triangles(tile, triangle, flag, masks);
+        draw_4triangles(tile, triangle, key.mask, flag, masks);
         if (m_skip_full && tile.m_mask == ~0u)
         {
 #if USE_STATS
             while (tri != tri_end)
             {
                 auto & lkey = *tri++;
-                tile.m_triangles_skipped += bx::uint32_cntbits(tri_data[lkey.index].mask);
+                tile.m_triangles_skipped += bx::uint32_cntbits(lkey.mask);
             }
 #endif
             break;

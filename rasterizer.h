@@ -30,9 +30,12 @@ struct ALIGN16 Rasterizer
 
     struct SortKey
     {
-        uint32_t z;
-        uint32_t index;
+        uint64_t z : 22;
+        uint64_t mask : 4;
+        uint64_t flag : 19; // up to 512k objects pushed
+        uint64_t index : 19; // up to 512k triangles
     };
+    static_assert(sizeof(SortKey)==8, "the sort key should be 8 bytes");
 
     struct TrianagleData
     {
@@ -90,7 +93,7 @@ private:
 
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 
-    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t* flags, const vec4i_t* masks);
+    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t mask, uint32_t* flags, const vec4i_t* masks);
 
     void flush_thread_data(ThreadData& thread_data);
 public:
