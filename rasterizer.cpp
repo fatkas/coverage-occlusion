@@ -16,7 +16,7 @@ inline static void sort(vec4_t &A0, vec4_t &A1, vec4_t &B0, vec4_t &B1 )
     B1 = VecSub(sy, B0);
 }
 
-inline static void ExtractMatrix(const Matrix& m, vec4_t* matrix)
+inline static void ExtractMatrix(const Matrix& m, RESTRICT vec4_t* matrix)
 {
     #define EXTRACT(line) matrix[line*4+0] = VecShuffle( m.r[line], m.r[line], VecShuffleMask(0, 0, 0, 0));  \
                         matrix[line*4+1] = VecShuffle( m.r[line], m.r[line], VecShuffleMask(1, 1, 1, 1)); \
@@ -42,7 +42,7 @@ __forceinline static vec4_t intersectLineZ(vec4_t a, vec4_t b, vec4_t plane)
 }
 
 template< int vertex_component, bool cmp_func >
-__forceinline static int clip_triangle(const vec4_t* input, int count, vec4_t* output, vec4_t plane)
+__forceinline static int clip_triangle(RESTRICT const vec4_t* input, int count, RESTRICT vec4_t* output, vec4_t plane)
 {
     int vertices = 0;
     for ( int i = 0; i < count; ++i )
@@ -94,7 +94,7 @@ __forceinline static int clip_triangle(const vec4_t* input, int count, vec4_t* o
     return vertices / 3;
 }
 
-__forceinline int static clip_triangle(vec4_t* v, vec4_t* dst)
+__forceinline int static clip_triangle(RESTRICT vec4_t* v, RESTRICT vec4_t* dst)
 {
     vec4_t g_total_width_v = Vector4(Rasterizer::g_total_width);
     vec4_t g_total_height_v = Vector4(Rasterizer::g_total_height);
@@ -110,7 +110,7 @@ __forceinline int static clip_triangle(vec4_t* v, vec4_t* dst)
 }
 
 __forceinline void Rasterizer::push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
-                                               const vec4_t* x, const vec4_t* y, const vec4_t* w, bool select_tiles)
+                                               RESTRICT const vec4_t* x, RESTRICT const vec4_t* y, RESTRICT const vec4_t* w, bool select_tiles)
 {
     const vec4_t local_fixed_point = Vector4(1<<g_fixed_point_bits);
     vec4_t x0 = VecMul(x[0], local_fixed_point);
@@ -222,8 +222,8 @@ __forceinline void load_4vertices(vec4_t& x, vec4_t& y, vec4_t& w, const vec4_t*
 #undef IDX
 }
 
-__forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t flag, const vec4_t* src, int count, const uint16_t* indices,
-                                                     int* bounds_array, bool select_tiles, bool use_indices)
+__forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_t flag, const RESTRICT vec4_t* src, int count, const RESTRICT uint16_t* indices,
+                                                     RESTRICT int* bounds_array, bool select_tiles, bool use_indices)
 {
     assert(( (count / 3) & 3 ) == 0);
     for ( int i = 0; i < count; i += 12 )
@@ -237,7 +237,7 @@ __forceinline void Rasterizer::push_triangle_batched(TrianagleData& data,uint32_
 }
 
 void Rasterizer::push_object_clipped(ThreadData& thread_data, const uint16_t* indices, int index_count,
-                                     const vec4_t* transformed_vertices, int vertex_count, int* bounds_array, uint32_t flag, bool select_tiles)
+                                     const vec4_t* transformed_vertices, int* bounds_array, uint32_t flag, bool select_tiles)
 {
     assert(index_count >= 12);
 
@@ -247,10 +247,6 @@ void Rasterizer::push_object_clipped(ThreadData& thread_data, const uint16_t* in
     uint32_t clipped_triangle_count = 0;
     for (int i = 0; i < index_count; i += 12)
     {
-        assert(indices[ i + 0 ] < vertex_count);
-        assert(indices[ i + 1 ] < vertex_count);
-        assert(indices[ i + 2 ] < vertex_count);
-
         vec4_t v[12];
 
         v[0] = transformed_vertices[indices[i + 0]];
@@ -286,7 +282,7 @@ void Rasterizer::push_object_clipped(ThreadData& thread_data, const uint16_t* in
     push_triangle_batched(thread_data.data, flag, clipped_triangles, clipped_triangle_count*3, 0, bounds_array, select_tiles, false);
 }
 
-bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array)
+bool Rasterizer::occlude_object(const RESTRICT vec4_t* m, vec4_t v_min, vec4_t v_max, RESTRICT int* bounds_array)
 {
     vec4_t g_total_width_v = Vector4(g_total_width);
     vec4_t g_total_height_v = Vector4(g_total_height);
@@ -388,7 +384,7 @@ bool Rasterizer::occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int
     return mask == 15 && intersect_near == false;
 }
 
-__forceinline vec4_t Rasterizer::get_tile_bounds( vec4_t v_min, vec4_t v_max )
+__forceinline vec4_t Rasterizer::get_tile_bounds(vec4_t v_min, vec4_t v_max)
 {
     vec4_t minmax = VecMoveLH(v_min, v_max); // xyXY
     vec4_t tile_bounds = VecMad(minmax, m_tile_size, m_almost_one);
@@ -421,7 +417,7 @@ void Rasterizer::flush_thread_data(ThreadData& thread_data)
     thread_data.clear();
 }
 
-void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint32_t thread_index)
+void Rasterizer::push_objects(const RESTRICT Object* objects, uint32_t object_count, uint32_t thread_index)
 {
     ThreadData & thread_data = m_mt ? m_thread_data[thread_index] : m_data;
     if (m_mt)
@@ -494,7 +490,7 @@ void Rasterizer::push_objects(const Object* objects, uint32_t object_count, uint
         if (inside)
             push_triangle_batched(thread_data.data, flag, transformed_vertices, obj.index_count, obj.indices, bounds_array, select_tiles, true);
         else
-            push_object_clipped(thread_data, obj.indices, obj.index_count, transformed_vertices, obj.vertex_count, bounds_array, flag, select_tiles);
+            push_object_clipped(thread_data, obj.indices, obj.index_count, transformed_vertices, bounds_array, flag, select_tiles);
     }
 
     if (m_mt)

@@ -2,7 +2,7 @@
 #include "rasterizer.h"
 #include "rasterizer_math.h"
 
-__forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag)
+__forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const RESTRICT vec4i_t* masks, RESTRICT uint32_t* flag)
 {
     for (int scanline = y1; scanline < y2; ++scanline)
     {

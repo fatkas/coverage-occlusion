@@ -1,7 +1,7 @@
 
 #include "rasterizer.h"
 
-void Rasterizer::push_box(const Matrix& mat, int* flag)
+void Rasterizer::push_box(const Matrix& , int* )
 {
 #if 0
     ALIGN16 int bounds_array[4] = { 0 };

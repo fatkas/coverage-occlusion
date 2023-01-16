@@ -82,7 +82,7 @@ private:
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
 
     void push_object_clipped(ThreadData& data, const uint16_t* indices, int index_count,
-                             const vec4_t* vertices, int vertex_count, int* bounds_array, uint32_t flag, bool select_tiles);
+                             const vec4_t* vertices, int* bounds_array, uint32_t flag, bool select_tiles);
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
 

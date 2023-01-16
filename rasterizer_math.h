@@ -33,8 +33,13 @@ struct vec3_t
 #define __forceinline __attribute__((always_inline))
 #define atomic_add(a,b) __atomic_add_fetch(&a, b, __ATOMIC_RELAXED) - (b);
 
-#define USE_SSE !defined(__arm64__)
-#define USE_NEON defined(__arm64__)
+#if defined(__arm64__)
+#define USE_NEON 1
+#else
+#define USE_SSE 1
+#endif
+
+#define RESTRICT __restrict
 
 #if USE_SSE
 #include "rasterizer_math_sse.inl"
