@@ -8,6 +8,8 @@
 
 namespace stl = tinystl;
 
+// avoiding conditionals https://guru.multimedia.cx/avoiding-branchesifconditionals/
+
 // 96bytes, 24 bytes per priangle
 struct ALIGN16 Triangle
 {
@@ -40,13 +42,14 @@ struct ALIGN16 Tile
     static constexpr int    g_tile_width = 128;
 
     vec4i_t                 m_frame_buffer[g_tile_height];
-    uint64_t                m_mask = 0;
+    uint32_t                m_mask = 0;
     uint32_t                m_triangles_drawn_total = 0;
     uint32_t                m_triangles_drawn_occluder_total = 0;
     uint32_t                m_triangles_drawn_occludee_total = 0;
     uint32_t                m_triangles_skipped = 0;
+    uint32_t                m_triangles_backface = 0;
     int                     m_x = 0;
-    int                     m_y = 0;
+    vec4_t                  m_y;
 
     Tile(int x, int y);
 
@@ -56,6 +59,7 @@ struct ALIGN16 Tile
         m_mask = 0;
 
         m_triangles_drawn_total = 0;
+        m_triangles_backface = 0;
         m_triangles_drawn_occluder_total = 0;
         m_triangles_drawn_occludee_total = 0;
         m_triangles_skipped = 0;

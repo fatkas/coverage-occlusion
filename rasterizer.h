@@ -53,9 +53,14 @@ struct ALIGN16 Rasterizer
 
     struct ThreadData
     {
-        TrianagleData        data;
-        stl::vector<vec4_t>  vertices;
-        stl::vector<SortKey> sort;
+        // this is where we put triangles/tile indices in worker/main threads
+        TrianagleData           data;
+        // temp thread local data that holds tranformed/clipped vertices
+        stl::vector<vec4_t>     vertices;
+        // temp thead local data that holds clipped indices
+        stl::vector<uint16_t>   indices;
+        // temp thread local data that's used for radix sort
+        stl::vector<SortKey>    sort;
 
         void clear();
     };
@@ -66,6 +71,7 @@ private:
     vec4_t                  m_tile_size;
     vec4_t                  m_almost_one;
     vec4_t                  m_tile_bounds;
+    vec4_t                  m_tile_height_v;
 
     ThreadData              m_data;
     stl::vector<Tile>       m_tiles;
@@ -80,12 +86,13 @@ private:
                                 const vec4_t* x, const vec4_t* y, const vec4_t* w, bool select_tiles);
 
     inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec4_t* src, int count, const uint16_t* indices,
-                                      int* bounds_array, bool select_tiles, bool use_indices);
+                                      int* bounds_array, bool select_tiles);
 
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
 
     void push_object_clipped(ThreadData& data, const uint16_t* indices, int index_count,
-                             const vec4_t* vertices, int* bounds_array, uint32_t flag, bool select_tiles);
+                             vec4_t* transformed_vertices, uint32_t vertex_count,
+                             int* bounds_array, uint32_t flag, bool select_tiles);
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
 
@@ -103,11 +110,19 @@ public:
         Matrix transform;
         vec4_t bound_min;
         vec4_t bound_max;
+
         const uint16_t* indices = nullptr;
         uint32_t index_count = 0;
         const vec4_t* vertices = nullptr;
         uint32_t vertex_count = 0;
         uint32_t* visibility = nullptr;
+
+        // https://cgvr.cs.uni-bremen.de/teaching/cg_literatur/backface_normal_masks.pdf
+        // instead of calculating triangle orientation lets use triangle masks
+        // since the normal mask is uint8, store up to 8 normals
+        const uint8_t* normal_masks = nullptr;
+        vec4_t* normals = nullptr;
+        uint8_t normal_count = 0;
     };
 
     bool        m_skip_full = true;
@@ -119,6 +134,8 @@ public:
     uint32_t    m_triangles_drawn_occludee_total = 0;
     uint32_t    m_triangles_skipped = 0;
     uint32_t    m_triangles_offscreen = 0;
+    uint32_t    m_triangles_backface = 0;
+    uint32_t    m_full_groups = 0;
 
     Rasterizer()
     {
@@ -140,11 +157,21 @@ public:
         return m_tiles;
     }
 
+    const TrianagleData::TileData* get_tile_data() const
+    {
+        return m_data.data.tiles;
+    }
+
     void sort_triangles(uint32_t tile, uint32_t thread_index = 0);
     void sort_triangles();
 
     void draw_triangles(uint32_t tile);
     void draw_triangles();
+
+    uint32_t get_total_groups() const
+    {
+        return m_data.data.triangle_count;
+    }
 
     void setMT(bool mt)
     {

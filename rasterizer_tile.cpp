@@ -4,7 +4,7 @@
 
 Tile::Tile(int x, int y)
     : m_x(x)
-    , m_y(y)
 {
+    m_y = Vector4(y*g_tile_height);
     clear();
 }

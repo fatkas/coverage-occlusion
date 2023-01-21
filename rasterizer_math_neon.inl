@@ -114,23 +114,23 @@ inline vec4_t VecMoveHL(vec4_t a, vec4_t b)
 {
     return vzip2q_u64(a, b);
 }
-inline void VecStore(void* where, vec4_t what)
+inline void VecStore(void* __restrict where, vec4_t what)
 {
     vst1q_f32((float*)where, what);
 }
-inline void VecStoreU(void* where, vec4_t what)
+inline void VecStoreU(void* __restrict where, vec4_t what)
 {
     vst1q_f32((float*)where, what);
 }
-inline void VecStoreS(void* where, vec4_t what)
+inline void VecStoreS(void* __restrict where, vec4_t what)
 {
     vst1q_lane_f32((float*)where, what, 0);
 }
-inline vec4_t VecLoad(const void* what)
+inline vec4_t VecLoad(const void* __restrict what)
 {
     return vld1q_f32((const float*)what);
 }
-inline vec4_t VecLoadU(const void* what)
+inline vec4_t VecLoadU(const void* __restrict what)
 {
     return vld1q_f32((const float*)what);
 }
@@ -160,11 +160,11 @@ inline vec4i_t VecFloat2Int(vec4_t a)
 {
     return vcvtq_s32_f32(a);
 }
-inline vec4i_t VecIntLoad(const void* p)
+inline vec4i_t VecIntLoad(const void* __restrict p)
 {
     return vld1q_s32((const int32_t *) p);
 }
-inline void VecIntStore(void* where, vec4i_t a)
+inline void VecIntStore(void* __restrict where, vec4i_t a)
 {
     vst1q_s32((int32_t *)where, a);
 }

@@ -2,8 +2,11 @@
 #include "rasterizer.h"
 #include "rasterizer_math.h"
 
-__forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const RESTRICT vec4i_t* masks, RESTRICT uint32_t* flag)
+__forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1_global, int& xs2_global, int y1, int y2, int xa1, int xa2, const RESTRICT vec4i_t* masks, RESTRICT uint32_t* flag)
 {
+    uint32_t mask = 0;
+    vec4i_t full_span = m_full_span;
+    int xs1 = xs1_global, xs2 = xs2_global;
     for (int scanline = y1; scanline < y2; ++scanline)
     {
         int xb = xs1 >> g_fixed_point_bits;
@@ -18,8 +21,8 @@ __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, in
         if (flag == nullptr)
         {
             tile.m_frame_buffer[scanline] = VecIntOr(tile.m_frame_buffer[scanline], span);
-            uint64_t bit = VecIntMask(VecIntCmpEqual(VecIntAnd(tile.m_frame_buffer[scanline], m_full_span), m_full_span)) == 65535;
-            tile.m_mask |= bit << scanline;
+            uint32_t bit = VecIntMask(VecIntCmpEqual(VecIntAnd(tile.m_frame_buffer[scanline], full_span), full_span)) == 65535;
+            mask |= bit << scanline;
         }
         else
         {
@@ -30,10 +33,13 @@ __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1, int& xs2, in
             }
         }
     }
+    xs1_global = xs1;
+    xs2_global = xs2;
+    tile.m_mask |= mask;
     return tile.m_mask == ~0u;
 }
 
-__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t tri_mask, RESTRICT uint32_t* flag, RESTRICT const vec4i_t* masks)
+__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& RESTRICT tri, uint32_t tri_mask, uint32_t* RESTRICT flag, const vec4i_t* RESTRICT masks)
 {
 #if USE_PACKED_TRIANGLES
     vec4_t quantizer = Vector4(1.f/(1<<g_fixed_point_bits));
@@ -72,14 +78,14 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& t
     VecIntStore(dx3, VecFloat2Int(vdx3));
 
     // adjust y to be inside tile bounds
-    vy0 = VecSub(vy0, Vector4(tile.m_y*Tile::g_tile_height));
-    vy1 = VecSub(vy1, Vector4(tile.m_y*Tile::g_tile_height));
-    vy2 = VecSub(vy2, Vector4(tile.m_y*Tile::g_tile_height));
+    vy0 = VecSub(vy0, tile.m_y);
+    vy1 = VecSub(vy1, tile.m_y);
+    vy2 = VecSub(vy2, tile.m_y);
     vec4_t dy0 = VecMax(VecZero(), -vy0);
     vec4_t dy1 = VecMax(VecZero(), -vy1);
-    vy0 = VecMin(VecMax(vy0, VecZero()), Vector4(Tile::g_tile_height));
-    vy1 = VecMin(VecMax(vy1, VecZero()), Vector4(Tile::g_tile_height));
-    vy2 = VecMin(VecMax(vy2, VecZero()), Vector4(Tile::g_tile_height));
+    vy0 = VecMin(VecMax(vy0, VecZero()), m_tile_height_v);
+    vy1 = VecMin(VecMax(vy1, VecZero()), m_tile_height_v);
+    vy2 = VecMin(VecMax(vy2, VecZero()), m_tile_height_v);
 
     VecIntStore(iy0, VecFloat2Int(vy0));
     VecIntStore(iy1, VecFloat2Int(vy1));
@@ -88,6 +94,7 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& t
     VecIntStore(ix1, VecFloat2Int(VecMad(vdx2, dy0, vx0)));
     VecIntStore(ix2, VecFloat2Int(VecMad(vdx3, dy1, vx1)));
 
+    bool skip_full = m_skip_full;
     for (size_t i = 0, mask = 1; i < 4; ++i, mask <<= 1)
     {
         if ((tri_mask & mask ) == 0)
@@ -96,7 +103,7 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& t
         assert(iy0[i] <= 32);
         assert(iy2[i] <= 32);
         uint32_t span = (0xffffffff << iy0[i]) & (0xffffffff >> (Tile::g_tile_height - iy2[i]));
-        if (m_skip_full && (tile.m_mask & span) == span)
+        if (skip_full && (tile.m_mask & span) == span)
         {
 #if USE_STATS
             ++tile.m_triangles_skipped;
@@ -133,6 +140,7 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
     const TriangleType* tri_data = m_data.data.triangle_data;
     uint32_t** flags = m_flags.data();
     vec4i_t* masks = m_masks.data() + tile.m_x*g_max_masks_per_tile;
+    bool skip_full = m_skip_full;
     while (tri != tri_end)
     {
         assert(tri->index < m_data.data.triangle_count);
@@ -148,7 +156,7 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
             continue;
         }
         draw_4triangles(tile, triangle, key.mask, flag, masks);
-        if (m_skip_full && tile.m_mask == ~0u)
+        if (skip_full && tile.m_mask == ~0u)
         {
 #if USE_STATS
             while (tri != tri_end)
