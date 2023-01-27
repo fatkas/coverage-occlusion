@@ -121,6 +121,39 @@ static const uint16_t s_cubeIndices[36] =
 	6, 3, 7,
 };
 
+uint8_t s_cubeNormalMasks[12] =
+{
+    1<<5, // back
+    1<<5, // back
+
+    1<<4, // front
+    1<<4, // front
+
+    1<<0, // left
+    1<<0, // left
+
+    1<<1, // right
+    1<<1, // right
+
+    1<<3, // up
+    1<<3, // up
+
+    1<<2, // down
+    1<<2, // down
+};
+
+vec4_t s_cubeNormals[6] =
+{
+    Vector4(-1, 0, 0, 0),
+    Vector4( 1, 0, 0, 0),
+
+    Vector4( 0,-1, 0, 0),
+    Vector4( 0, 1, 0, 0),
+
+    Vector4( 0, 0,-1, 0),
+    Vector4( 0, 0, 1, 0)
+};
+
 static const float s_mod[6][3] =
 {
 	{ 1.0f, 1.0f, 1.0f },
@@ -160,6 +193,12 @@ static void screenSpaceQuad(bgfx::Encoder* encoder)
 class ExampleOcclusionCulling : public entry::AppI
 {
 public:
+    struct ObjectSettings
+    {
+        bool showNormals = false;
+        int32_t selectedFace = 0;
+    };
+
     ExampleOcclusionCulling(const char* _name, const char* _description, const char* _url)
 		: entry::AppI(_name, _description, _url)
         , m_DrawTasks(this)
@@ -446,20 +485,40 @@ public:
             ImGui::Text("total drawn occludee triangles %d", m_Rasterizer.m_triangles_drawn_occludee_total);
             ImGui::Text("total skipped triangles %d", m_Rasterizer.m_triangles_skipped);
             ImGui::Text("total offscreen triangles %d", m_Rasterizer.m_triangles_offscreen);
+            ImGui::Text("total backface triangles %d", m_Rasterizer.m_triangles_backface);
+            ImGui::Text("total groups %d", m_Rasterizer.get_total_groups());
 
             const auto& tiles = m_Rasterizer.get_tiles();
             if (ImGui::TreeNode("Tiles", "Tiles (%d)", (uint32_t)tiles.size()))
             {
-                for (auto & t : tiles)
+                for (size_t idx = 0; idx < tiles.size(); ++idx)
                 {
-                    if (ImGui::TreeNode(std::to_string(t.m_x + t.m_y*Rasterizer::g_width).c_str(), "Tile %d (%d/%d) %s", t.m_x, /*(uint32_t)t.m_triangle_count*/0, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
+                    auto & t = tiles[idx];
+                    auto & t_data = m_Rasterizer.get_tile_data()[idx];
+                    if (ImGui::TreeNode(std::to_string(idx).c_str(), "Tile %d (%d/%d) %s", t.m_x, t_data.triangle_index_count, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
                     {
-                        ImGui::Text("total sorted triangles %d", /*(uint32_t)t.m_triangles.size()*/0);
+                        ImGui::Text("total sorted triangles %d", (uint32_t)t_data.triangle_indices.size());
                         ImGui::Text("total drawn triangles %d", t.m_triangles_drawn_total);
                         ImGui::Text("total drawn occluder triangles %d", t.m_triangles_drawn_occluder_total);
                         ImGui::Text("total drawn occludee triangles %d", t.m_triangles_drawn_occludee_total);
                         ImGui::Text("total skipped triangles %d", t.m_triangles_skipped);
-                        ImGui::Text("mask %llu", t.m_mask);
+                        ImGui::Text("mask %d", t.m_mask);
+                        ImGui::TreePop();
+                    }
+                }
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Objects"))
+            {
+                for (size_t idx = 0; idx < m_ObjectSettings.size(); ++idx)
+                {
+                    auto & set = m_ObjectSettings[idx];
+                    if (ImGui::TreeNode(std::to_string(idx).c_str(), "Object %lu", idx))
+                    {
+                        const char* items[12] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"};
+                        ImGui::Checkbox("Show normals", &set.showNormals);
+                        ImGui::Combo("Selected face", &set.selectedFace, items, 12);
                         ImGui::TreePop();
                     }
                 }
@@ -516,6 +575,7 @@ public:
                 uint32_t max_drawcalls = m_dim*m_dim*m_dim;
                 m_Objects.resize(max_drawcalls*2);
                 m_Visibility.resize(max_drawcalls);
+                m_ObjectSettings.resize(max_drawcalls);
                 for (uint32_t zz = 0; zz < uint32_t(m_dim); ++zz)
                 {
                     for (uint32_t yy = 0; yy < uint32_t(m_dim); ++yy)
@@ -554,13 +614,21 @@ public:
                             m_Objects[idx+max_drawcalls].visibility = nullptr;
                             m_Objects[idx+max_drawcalls].bound_min = {-1.f, -1.f, -1.f, 1.f};
                             m_Objects[idx+max_drawcalls].bound_max = {1.f, 1.f, 1.f, 1.f};
+
+                            m_Objects[idx].normal_masks = s_cubeNormalMasks;
+                            m_Objects[idx].normals = s_cubeNormals;
+                            m_Objects[idx].normal_count = sizeof(s_cubeNormals) / sizeof(s_cubeNormals[0]);
+
+                            m_Objects[idx+max_drawcalls].normal_masks = s_cubeNormalMasks;
+                            m_Objects[idx+max_drawcalls].normals = s_cubeNormals;
+                            m_Objects[idx+max_drawcalls].normal_count = sizeof(s_cubeNormals) / sizeof(s_cubeNormals[0]);
                         }
                     }
                 }
             }
 
             Matrix view_mat = MatrixSet(view), proj_mat = MatrixSet(proj);
-            m_Rasterizer.begin(view_mat * proj_mat * MatrixScaling(0.5f, -0.5f, 1.0f) * MatrixTranslation(Vector4( .5f, 0.5f, 0.0f, 1.0f )) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f));
+            m_Rasterizer.begin(view_mat * proj_mat * MatrixScaling(0.5f, -0.5f, 1.0f) * MatrixTranslation(Vector4( .5f, 0.5f, 0.0f, 1.0f )) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f), view_mat.r[2]);
             if (m_Occlusion)
             {
                 m_Rasterizer.setMT(m_MT);
@@ -653,6 +721,7 @@ public:
 
     stl::vector<Rasterizer::Object> m_Objects;
     stl::vector<uint32_t> m_Visibility;
+    stl::vector<ObjectSettings> m_ObjectSettings;
 
     bool     m_Wireframe = false;
     bool     m_Occlusion = true;

@@ -47,7 +47,6 @@ struct ALIGN16 Tile
     uint32_t                m_triangles_drawn_occluder_total = 0;
     uint32_t                m_triangles_drawn_occludee_total = 0;
     uint32_t                m_triangles_skipped = 0;
-    uint32_t                m_triangles_backface = 0;
     int                     m_x = 0;
     vec4_t                  m_y;
 
@@ -59,7 +58,6 @@ struct ALIGN16 Tile
         m_mask = 0;
 
         m_triangles_drawn_total = 0;
-        m_triangles_backface = 0;
         m_triangles_drawn_occluder_total = 0;
         m_triangles_drawn_occludee_total = 0;
         m_triangles_skipped = 0;

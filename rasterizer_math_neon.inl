@@ -197,3 +197,17 @@ inline vec4i_t VecIntPack16(vec4i_t a, vec4i_t b)
 {
     return vcombine_u16(vqmovun_s32(a), vqmovun_s32(b));
 }
+
+#define MatTranspose4(a,b,c,d)                        \
+do {                                                  \
+    float32x4x2_t ROW01 = vtrnq_f32(a, b);            \
+    float32x4x2_t ROW23 = vtrnq_f32(c, d);            \
+    a = vcombine_f32(vget_low_f32(ROW01.val[0]),      \
+                        vget_low_f32(ROW23.val[0]));  \
+    b = vcombine_f32(vget_low_f32(ROW01.val[1]),      \
+                        vget_low_f32(ROW23.val[1]));  \
+    c = vcombine_f32(vget_high_f32(ROW01.val[0]),     \
+                        vget_high_f32(ROW23.val[0])); \
+    d = vcombine_f32(vget_high_f32(ROW01.val[1]),     \
+                        vget_high_f32(ROW23.val[1])); \
+} while (0)

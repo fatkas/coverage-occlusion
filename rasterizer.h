@@ -9,8 +9,9 @@
 
 #include <bx/uint32_t.h>
 
-#define USE_PACKED_TRIANGLES 1
-#define USE_STATS 0
+#define USE_PACKED_TRIANGLES 0
+#define USE_STATS 1
+#define USE_NORMAL_MASKS 1
 
 struct ALIGN16 Rasterizer
 {
@@ -31,9 +32,8 @@ struct ALIGN16 Rasterizer
     struct SortKey
     {
         uint64_t z : 22;
-        uint64_t mask : 4;
-        uint64_t flag : 19; // up to 512k objects pushed
-        uint64_t index : 19; // up to 512k triangles
+        uint64_t flag : 21; // up to 512k objects pushed
+        uint64_t index : 21; // up to 512k triangles
     };
     static_assert(sizeof(SortKey)==8, "the sort key should be 8 bytes");
 
@@ -72,6 +72,9 @@ private:
     vec4_t                  m_almost_one;
     vec4_t                  m_tile_bounds;
     vec4_t                  m_tile_height_v;
+    vec4_t                  m_camera_direction;
+    vec4_t                  m_fixed_point;
+    vec4_t                  m_inv_fixed_point;
 
     ThreadData              m_data;
     stl::vector<Tile>       m_tiles;
@@ -83,10 +86,10 @@ private:
     bool                    m_mt = false;
 
     inline void push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
-                                const vec4_t* x, const vec4_t* y, const vec4_t* w, bool select_tiles);
+                                vec4_t v0[4], vec4_t v1[4], vec4_t v2[4], bool select_tiles);
 
     inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec4_t* src, int count, const uint16_t* indices,
-                                      int* bounds_array, bool select_tiles);
+                                      const uint8_t* normal_masks, uint32_t normal_mask, int* bounds_array, bool select_tiles);
 
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
 
@@ -100,7 +103,7 @@ private:
 
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 
-    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t mask, uint32_t* flags, const vec4i_t* masks);
+    __forceinline void draw_4triangles(Tile& tile, const TriangleType& tri, uint32_t* flags, const vec4i_t* masks);
 
     void flush_thread_data(ThreadData& thread_data);
 public:
@@ -135,13 +138,12 @@ public:
     uint32_t    m_triangles_skipped = 0;
     uint32_t    m_triangles_offscreen = 0;
     uint32_t    m_triangles_backface = 0;
-    uint32_t    m_full_groups = 0;
 
     Rasterizer()
     {
     }
 
-    void begin(const Matrix& m);
+    void begin(const Matrix& m, vec4_t cam);
 
     void push_box(const Matrix& mat, int* flag);
 

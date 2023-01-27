@@ -39,11 +39,10 @@ __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1_global, int& 
     return tile.m_mask == ~0u;
 }
 
-__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& RESTRICT tri, uint32_t tri_mask, uint32_t* RESTRICT flag, const vec4i_t* RESTRICT masks)
+__forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& RESTRICT tri, uint32_t* RESTRICT flag, const vec4i_t* RESTRICT masks)
 {
+    vec4_t inv_quantizer = m_inv_fixed_point;
 #if USE_PACKED_TRIANGLES
-    vec4_t quantizer = Vector4(1.f/(1<<g_fixed_point_bits));
-
     vec4i_t x0x1 = VecIntLoad(tri.x0);
     vec4i_t x2y0 = VecIntLoad(tri.x2);
     vec4i_t y1y2 = VecIntLoad(tri.y1);
@@ -65,7 +64,7 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& R
     vec4_t vy0 = y0, vy1 = y1, vy2 = y2;
 #else
     vec4_t vx0 = tri.x0, vx1 = tri.x1, vx2 = tri.x2;
-    vec4_t vy0 = tri.y0, vy1 = tri.y1, vy2 = tri.y2;
+    vec4_t vy0 = VecMul(tri.y0, inv_quantizer), vy1 = VecMul(tri.y1, inv_quantizer), vy2 = VecMul(tri.y2, inv_quantizer);
 #endif
 
     ALIGN16 int iy0[4], iy1[4], iy2[4], ix0[4], ix1[4], ix2[4], dx1[4], dx2[4], dx3[4];
@@ -97,9 +96,6 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& R
     bool skip_full = m_skip_full;
     for (size_t i = 0, mask = 1; i < 4; ++i, mask <<= 1)
     {
-        if ((tri_mask & mask ) == 0)
-            continue;
-
         assert(iy0[i] <= 32);
         assert(iy2[i] <= 32);
         uint32_t span = (0xffffffff << iy0[i]) & (0xffffffff >> (Tile::g_tile_height - iy2[i]));
@@ -149,22 +145,10 @@ void Rasterizer::draw_triangles(uint32_t tile_index)
 
         uint32_t* flag = key.flag ? flags[key.flag] : nullptr;
         if (key.flag && *flag)
-        {
-#if USE_STATS
-            tile.m_triangles_skipped += bx::uint32_cntbits(key.mask);
-#endif
             continue;
-        }
-        draw_4triangles(tile, triangle, key.mask, flag, masks);
+        draw_4triangles(tile, triangle, flag, masks);
         if (skip_full && tile.m_mask == ~0u)
         {
-#if USE_STATS
-            while (tri != tri_end)
-            {
-                auto & lkey = *tri++;
-                tile.m_triangles_skipped += bx::uint32_cntbits(lkey.mask);
-            }
-#endif
             break;
         }
     }

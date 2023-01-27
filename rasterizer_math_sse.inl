@@ -78,3 +78,5 @@ inline vec4_t Vector4( float a )
 #define VecIntMask(a) _mm_movemask_epi8(a)
 #define VecInt2Float(a) _mm_cvtepi32_ps(a)
 #define VecIntPack16(a,b) _mm_packus_epi32(a,b)
+
+#define MatTranspose4(a,b,c,d) _MM_TRANSPOSE4(a,b,c,d)
