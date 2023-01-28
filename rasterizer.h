@@ -9,8 +9,8 @@
 
 #include <bx/uint32_t.h>
 
-#define USE_PACKED_TRIANGLES 0
-#define USE_STATS 1
+#define USE_PACKED_TRIANGLES 1
+#define USE_STATS 0
 #define USE_NORMAL_MASKS 1
 
 struct ALIGN16 Rasterizer
@@ -57,6 +57,8 @@ struct ALIGN16 Rasterizer
         TrianagleData           data;
         // temp thread local data that holds tranformed/clipped vertices
         stl::vector<vec4_t>     vertices;
+        stl::vector<vec2_t>     positions;
+        stl::vector<uint32_t>   depths;
         // temp thead local data that holds clipped indices
         stl::vector<uint16_t>   indices;
         // temp thread local data that's used for radix sort
@@ -75,6 +77,7 @@ private:
     vec4_t                  m_camera_direction;
     vec4_t                  m_fixed_point;
     vec4_t                  m_inv_fixed_point;
+    vec4_t                  m_total_size;
 
     ThreadData              m_data;
     stl::vector<Tile>       m_tiles;
@@ -86,9 +89,9 @@ private:
     bool                    m_mt = false;
 
     inline void push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
-                                vec4_t v0[4], vec4_t v1[4], vec4_t v2[4], bool select_tiles);
+                                vec2_t v0[4], vec2_t v1[4], vec2_t v2[4], uint32_t group_w);
 
-    inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec4_t* src, int count, const uint16_t* indices,
+    inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec2_t* src, const uint32_t* w, const uint16_t* indices, int count,
                                       const uint8_t* normal_masks, uint32_t normal_mask, int* bounds_array, bool select_tiles);
 
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
@@ -99,7 +102,7 @@ private:
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
 
-    __forceinline vec4_t get_tile_bounds( vec4_t v_min, vec4_t v_max );
+    __forceinline vec4_t get_tile_bounds(vec4_t minmax);
 
     __forceinline bool draw_scanlines(Tile& tile, int& xs1, int& xs2, int y1, int y2, int xa1, int xa2, const vec4i_t* masks, uint32_t* flag);
 

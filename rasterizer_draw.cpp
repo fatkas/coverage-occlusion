@@ -6,11 +6,11 @@ __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1_global, int& 
 {
     uint32_t mask = 0;
     vec4i_t full_span = m_full_span;
-    int xs1 = xs1_global, xs2 = xs2_global;
+    int xs1 = xs1_global, xs2 = xs2_global, bits = g_fixed_point_bits;
     for (int scanline = y1; scanline < y2; ++scanline)
     {
-        int xb = xs1 >> g_fixed_point_bits;
-        int xe = xs2 >> g_fixed_point_bits;
+        int xb = xs1 >> bits;
+        int xe = xs2 >> bits;
         xs1 += xa1;
         xs2 += xa2;
 
@@ -54,11 +54,11 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& R
     lo = VecIntUnpackLo(x2y0, VecIntZero());
     hi = VecIntUnpackHi(x2y0, VecIntZero());
     vec4_t x2 = VecInt2Float(lo);
-    vec4_t y0 = VecMul(VecInt2Float(hi), quantizer);
+    vec4_t y0 = VecMul(VecInt2Float(hi), inv_quantizer);
     lo = VecIntUnpackLo(y1y2, VecIntZero());
     hi = VecIntUnpackHi(y1y2, VecIntZero());
-    vec4_t y1 = VecMul(VecInt2Float(lo), quantizer);
-    vec4_t y2 = VecMul(VecInt2Float(hi), quantizer);
+    vec4_t y1 = VecMul(VecInt2Float(lo), inv_quantizer);
+    vec4_t y2 = VecMul(VecInt2Float(hi), inv_quantizer);
 
     vec4_t vx0 = x0, vx1 = x1, vx2 = x2;
     vec4_t vy0 = y0, vy1 = y1, vy2 = y2;
@@ -94,7 +94,7 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& R
     VecIntStore(ix2, VecFloat2Int(VecMad(vdx3, dy1, vx1)));
 
     bool skip_full = m_skip_full;
-    for (size_t i = 0, mask = 1; i < 4; ++i, mask <<= 1)
+    for (size_t i = 0; i < 4; ++i)
     {
         assert(iy0[i] <= 32);
         assert(iy2[i] <= 32);
