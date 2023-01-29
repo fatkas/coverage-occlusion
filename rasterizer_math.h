@@ -152,9 +152,9 @@ __forceinline inline void Vector3TransformCoord4Homogeneous(const vec4_t* m, con
 
 __forceinline inline vec4_t Vector3TransformCoord(const Matrix& m, vec4_t vec)
 {
-    vec4_t xxxx = VecShuffle( vec, vec, VecShuffleMask(0,0,0,0) );
-    vec4_t yyyy = VecShuffle( vec, vec, VecShuffleMask(1,1,1,1) );
-    vec4_t zzzz = VecShuffle( vec, vec, VecShuffleMask(2,2,2,2) );
+    vec4_t xxxx = VecShuffle(vec, vec, VecShuffleMask(0,0,0,0));
+    vec4_t yyyy = VecShuffle(vec, vec, VecShuffleMask(1,1,1,1));
+    vec4_t zzzz = VecShuffle(vec, vec, VecShuffleMask(2,2,2,2));
     vec4_t vvvv = VecAdd(VecAdd(m.r[3], VecMul(zzzz, m.r[2])), VecAdd(VecMul(yyyy, m.r[1]), VecMul(xxxx, m.r[0])));
     vec4_t transformed_vvvv = VecDiv(vvvv, VecShuffle(vvvv, vvvv, VecShuffleMask(3, 3, 3, 3)));
 	return VecShuffle(transformed_vvvv, vvvv, VecShuffleMask(0, 1, 2, 3));
@@ -162,9 +162,9 @@ __forceinline inline vec4_t Vector3TransformCoord(const Matrix& m, vec4_t vec)
 
 __forceinline inline vec4_t Vector3TransformNormal(const Matrix& m, vec4_t vec)
 {
-    vec4_t xxxx = VecShuffle( vec, vec, VecShuffleMask(0,0,0,0) );
-    vec4_t yyyy = VecShuffle( vec, vec, VecShuffleMask(1,1,1,1) );
-    vec4_t zzzz = VecShuffle( vec, vec, VecShuffleMask(2,2,2,2) );
+    vec4_t xxxx = VecShuffle(vec, vec, VecShuffleMask(0,0,0,0));
+    vec4_t yyyy = VecShuffle(vec, vec, VecShuffleMask(1,1,1,1));
+    vec4_t zzzz = VecShuffle(vec, vec, VecShuffleMask(2,2,2,2));
     return VecMad(zzzz, m.r[2], VecMad(yyyy, m.r[1], VecMul(xxxx, m.r[0])));
 }
 
