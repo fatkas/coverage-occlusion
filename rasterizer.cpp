@@ -49,7 +49,7 @@ __forceinline static uint32_t clip_triangle(vec4_t* RESTRICT input, uint32_t& ve
     for (uint32_t i = 0; i < index_count / 3; ++i)
     {
 #if USE_NORMAL_MASKS
-        if (normal_masks && (normal_masks[i/3] & normal_mask) == 0)
+        if (normal_masks && (normal_masks[i] & normal_mask) == 0)
         {
             indices += 3;
             continue;
@@ -492,14 +492,16 @@ void Rasterizer::push_objects(const Object* RESTRICT objects, uint32_t object_co
     {
         auto & obj = objects[idx];
 
-        ExtractMatrix(obj.transform * m_transform, matrix);
+        Matrix local_matrix = obj.transform * m_transform;
+        ExtractMatrix(local_matrix, matrix);
 
         uint32_t normal_mask = 0;
 #if USE_NORMAL_MASKS
+        vec4_t dir = obj.transform.r[3] - m_camera_position;
         for (uint32_t n = 0; n < obj.normal_count; ++n)
         {
             vec4_t normal = Vector3TransformNormal(obj.transform, obj.normals[n]);
-            normal_mask |= (Vector3Dot(normal, m_camera_direction) < 0 ? 1 : 0) << n;
+            normal_mask |= (Vector3Dot(normal, dir) < 0 ? 1 : 0) << n;
         }
 #endif
 
@@ -550,7 +552,7 @@ void Rasterizer::push_objects(const Object* RESTRICT objects, uint32_t object_co
                 Vector3TransformCoord4Homogeneous(matrix, obj.vertices + i, transformed_vertices + i);
 
             uint32_t vertex_count = obj.vertex_count;
-            uint32_t clipped_indices = clip_triangles(transformed_vertices, vertex_count, obj.indices, obj.index_count, nullptr, 0, output_indices);
+            uint32_t clipped_indices = clip_triangles(transformed_vertices, vertex_count, obj.indices, obj.index_count, obj.normal_masks, normal_mask, output_indices);
             if (clipped_indices == 0)
             {
 #if USE_STATS
@@ -584,6 +586,15 @@ void Rasterizer::push_objects(const Object* RESTRICT objects, uint32_t object_co
                 VecStore(positions + i, VecUnpackLo(xxxx, yyyy));
                 VecStore(positions + i + 2, VecUnpackHi(xxxx, yyyy));
                 VecIntStore(depths + i, VecFloat2Int(VecMul(tw, w_quantizer)));
+            }
+            for (size_t i = aligned_count; i < vertex_count; i++)
+            {
+                vec4_t vec = transformed_vertices[i];
+                vec4_t wwww = VecShuffle(vec, vec, VecShuffleMask(3, 3, 3, 3));
+                vec4_t inv_wwww = VecMul(VecRcp(wwww), xy_quantizer);
+
+                VecStoreU(positions + i, VecMul(vec, inv_wwww));
+                VecIntStore(depths + i, VecFloat2Int(VecMul(wwww, w_quantizer)));
             }
 
             push_triangle_batched(thread_data.data, flag, positions, depths, output_indices, clipped_indices, nullptr, 0, bounds_array, select_tiles);
@@ -705,7 +716,7 @@ void Rasterizer::Init(uint32_t num_threads)
 void Rasterizer::begin(const Matrix& m, vec4_t cam)
 {
     m_transform = m;
-    m_camera_direction = cam;
+    m_camera_position = cam;
 
     m_data.clear();
     m_flag_count = 1;

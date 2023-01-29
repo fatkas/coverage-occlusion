@@ -74,7 +74,7 @@ private:
     vec4_t                  m_almost_one;
     vec4_t                  m_tile_bounds;
     vec4_t                  m_tile_height_v;
-    vec4_t                  m_camera_direction;
+    vec4_t                  m_camera_position;
     vec4_t                  m_fixed_point;
     vec4_t                  m_inv_fixed_point;
     vec4_t                  m_total_size;

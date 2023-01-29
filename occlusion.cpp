@@ -534,7 +534,7 @@ public:
             if (m_transform == 1)
                 now = m_timeStop;
 
-            cameraUpdate(m_deltaTimeNs/1000000.f, m_mouseState, ImGui::MouseOverArea());
+            cameraUpdate(m_deltaTimeNs/1000000000.f, m_mouseState, ImGui::MouseOverArea());
 
 			// const bx::Vec3 at  = { 0.0f, 0.0f,   0.0f };
 			// const bx::Vec3 eye = { 0.0f, 0.0f, -35.0f };
@@ -543,9 +543,11 @@ public:
             cameraGetViewMtx(view);
 			// bx::mtxLookAt(view, eye, at);
 
+            bx::Vec3 cam_pos = cameraGetPosition();
+
 			const bgfx::Caps* caps = bgfx::getCaps();
 			float proj[16];
-			bx::mtxProj(proj, 60.0f, float(m_width)/float(m_height), 0.1f, 100.0f, caps->homogeneousDepth);
+			bx::mtxProj(proj, 60.0f, float(m_width)/float(m_height), 0.1f, 600.0f, caps->homogeneousDepth);
 
 			// Set view and projection matrix for view 0.
 			bgfx::setViewTransform(0, view, proj);
@@ -628,7 +630,8 @@ public:
             }
 
             Matrix view_mat = MatrixSet(view), proj_mat = MatrixSet(proj);
-            m_Rasterizer.begin(view_mat * proj_mat * MatrixScaling(0.5f, -0.5f, 1.0f) * MatrixTranslation(Vector4( .5f, 0.5f, 0.0f, 1.0f )) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f), view_mat.r[2]);
+            vec4_t camera_pos = Vector4(cam_pos.x, cam_pos.y, cam_pos.z, 0.f);
+            m_Rasterizer.begin(view_mat * proj_mat * MatrixScaling(0.5f, -0.5f, 1.0f) * MatrixTranslation(Vector4( .5f, 0.5f, 0.0f, 1.0f )) * MatrixScaling( (float)Rasterizer::g_total_width, (float)Rasterizer::g_total_height, 1.0f), camera_pos);
             if (m_Occlusion)
             {
                 m_Rasterizer.setMT(m_MT);
