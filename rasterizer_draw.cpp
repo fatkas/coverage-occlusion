@@ -41,8 +41,9 @@ __forceinline bool Rasterizer::draw_scanlines(Tile& tile, int& xs1_global, int& 
 
 __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& RESTRICT tri, uint32_t* RESTRICT flag, const vec4i_t* RESTRICT masks)
 {
-    vec4_t inv_quantizer = m_inv_fixed_point;
 #if USE_PACKED_TRIANGLES
+    vec4_t inv_quantizer = m_inv_fixed_point;
+    
     vec4i_t x0x1 = VecIntLoad(tri.x0);
     vec4i_t x2y0 = VecIntLoad(tri.x2);
     vec4i_t y1y2 = VecIntLoad(tri.y1);
@@ -63,8 +64,9 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& R
     vec4_t vx0 = x0, vx1 = x1, vx2 = x2;
     vec4_t vy0 = y0, vy1 = y1, vy2 = y2;
 #else
-    vec4_t vx0 = tri.x0, vx1 = tri.x1, vx2 = tri.x2;
-    vec4_t vy0 = VecMul(tri.y0, inv_quantizer), vy1 = VecMul(tri.y1, inv_quantizer), vy2 = VecMul(tri.y2, inv_quantizer);
+    vec4_t quantizer = m_fixed_point;
+    vec4_t vx0 = VecMul(tri.x0, quantizer), vx1 = VecMul(tri.x1, quantizer), vx2 = VecMul(tri.x2, quantizer);
+    vec4_t vy0 = tri.y0, vy1 = tri.y1, vy2 = tri.y2;
 #endif
 
     ALIGN16 int iy0[4], iy1[4], iy2[4], ix0[4], ix1[4], ix2[4], dx1[4], dx2[4], dx3[4];
@@ -86,9 +88,9 @@ __forceinline void Rasterizer::draw_4triangles(Tile& tile, const TriangleType& R
     vy1 = VecMin(VecMax(vy1, VecZero()), m_tile_height_v);
     vy2 = VecMin(VecMax(vy2, VecZero()), m_tile_height_v);
 
-    VecIntStore(iy0, VecFloat2Int(vy0));
-    VecIntStore(iy1, VecFloat2Int(vy1));
-    VecIntStore(iy2, VecFloat2Int(vy2));
+    VecIntStore(iy0, VecFloat2Int(VecAdd(vy0, Vector4(0.5f))));
+    VecIntStore(iy1, VecFloat2Int(VecAdd(vy1, Vector4(0.5f))));
+    VecIntStore(iy2, VecFloat2Int(VecAdd(vy2, Vector4(0.5f))));
     VecIntStore(ix0, VecFloat2Int(VecMad(vdx1, dy0, vx0)));
     VecIntStore(ix1, VecFloat2Int(VecMad(vdx2, dy0, vx0)));
     VecIntStore(ix2, VecFloat2Int(VecMad(vdx3, dy1, vx1)));

@@ -5,15 +5,8 @@
 
 struct vec2_t
 {
-	union
-	{
-		struct
-		{
-			float x;
-			float y;
-		};
-		float v[2];
-	};	
+    float x;
+    float y;
 };
 
 struct vec3_t

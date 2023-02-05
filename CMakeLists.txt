@@ -1,9 +1,19 @@
 cmake_minimum_required(VERSION 3.0)
 
-set(CMAKE_XCODE_ATTRIBUTE_ARCHS "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
-set(CMAKE_OSX_ARCHITECTURES "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
-set(CMAKE_XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf")
-set(CMAKE_XCODE_ATTRIBUTE_DEPLOYMENT_POSTPROCESSING "NO")
+if (APPLE)
+    set(CMAKE_XCODE_ATTRIBUTE_ARCHS "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
+    set(CMAKE_OSX_ARCHITECTURES "$(ARCHS_STANDARD)" CACHE STRING "" FORCE)
+    set(CMAKE_XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf")
+    set(CMAKE_XCODE_ATTRIBUTE_DEPLOYMENT_POSTPROCESSING "NO")
+
+    set(CMAKE_OSX_SYSROOT "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" CACHE STRING "" FORCE)
+    # set(CMAKE_OSX_SYSROOT "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk" CACHE STRING "" FORCE)
+
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "" FORCE)
+endif()
+
+set(CMAKE_C_COMPILER "clang")
+set(CMAKE_CXX_COMPILER "clang")
 
 project(coverage-occlusion VERSION 0.18 LANGUAGES CXX)
 
@@ -12,18 +22,18 @@ enable_language(C)
 enable_language(CXX)
 
 set(SOURCES
-bgfx.cmake
-occlusion.cpp
-rasterizer.h
-rasterizer.cpp
-rasterizer_box.cpp
-rasterizer_sort.cpp
-rasterizer_draw.cpp
-rasterizer_math.h
-rasterizer_math_sse.inl
-rasterizer_math_neon.inl
-rasterizer_tile.h
-rasterizer_tile.cpp
+    bgfx.cmake
+    occlusion.cpp
+    rasterizer.h
+    rasterizer.cpp
+    rasterizer_box.cpp
+    rasterizer_sort.cpp
+    rasterizer_draw.cpp
+    rasterizer_math.h
+    rasterizer_math_sse.inl
+    rasterizer_math_neon.inl
+    rasterizer_tile.h
+    rasterizer_tile.cpp
 )
 
 set(SOURCES_ENKI

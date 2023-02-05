@@ -9,7 +9,7 @@
 
 #include <bx/uint32_t.h>
 
-#define USE_PACKED_TRIANGLES 1
+#define USE_PACKED_TRIANGLES 0
 #define USE_STATS 0
 #define USE_NORMAL_MASKS 1
 
@@ -66,6 +66,26 @@ struct ALIGN16 Rasterizer
 
         void clear();
     };
+
+    struct Object
+    {
+        Matrix transform;
+        vec4_t bound_min;
+        vec4_t bound_max;
+
+        const uint16_t* indices = nullptr;
+        uint32_t index_count = 0;
+        const vec4_t* vertices = nullptr;
+        uint32_t vertex_count = 0;
+        uint32_t* visibility = nullptr;
+
+        // https://cgvr.cs.uni-bremen.de/teaching/cg_literatur/backface_normal_masks.pdf
+        // instead of calculating triangle orientation lets use triangle masks
+        // since the normal mask is uint8, store up to 8 normals
+        const uint8_t* normal_masks = nullptr;
+        vec4_t* normals = nullptr;
+        uint8_t normal_count = 0;
+    };
 private:
 
     Matrix			        m_transform;
@@ -91,14 +111,13 @@ private:
     inline void push_4triangles(TrianagleData& data, uint32_t flag, int* bounds_array,
                                 vec2_t v0[4], vec2_t v1[4], vec2_t v2[4], uint32_t group_w);
 
-    inline void push_triangle_batched(TrianagleData& data, uint32_t flag, const vec2_t* src, const uint32_t* w, const uint16_t* indices, int count,
-                                      const uint8_t* normal_masks, uint32_t normal_mask, int* bounds_array, bool select_tiles);
+    template <bool select_tiles>
+    void push_triangles_batched(TrianagleData& data, uint32_t flag, const vec2_t* src, const uint32_t* w, const uint16_t* indices, int count,
+                                const uint8_t* normal_masks, uint32_t normal_mask, int* bounds_array);
+
+    void push_triangles_clipped(ThreadData & thread_data, vec4_t matrix[16], const Object& obj, uint32_t flag, const uint8_t* normal_masks, uint32_t normal_mask);
 
     bool occlude_object(const vec4_t* m, vec4_t v_min, vec4_t v_max, int* bounds_array);
-
-    void push_object_clipped(ThreadData& data, const uint16_t* indices, int index_count,
-                             vec4_t* transformed_vertices, uint32_t vertex_count,
-                             int* bounds_array, uint32_t flag, bool select_tiles);
 
     void sort_triangles(SortKey* triangles, uint32_t size, stl::vector<SortKey>& temp);
 
@@ -110,26 +129,6 @@ private:
 
     void flush_thread_data(ThreadData& thread_data);
 public:
-
-    struct Object
-    {
-        Matrix transform;
-        vec4_t bound_min;
-        vec4_t bound_max;
-
-        const uint16_t* indices = nullptr;
-        uint32_t index_count = 0;
-        const vec4_t* vertices = nullptr;
-        uint32_t vertex_count = 0;
-        uint32_t* visibility = nullptr;
-
-        // https://cgvr.cs.uni-bremen.de/teaching/cg_literatur/backface_normal_masks.pdf
-        // instead of calculating triangle orientation lets use triangle masks
-        // since the normal mask is uint8, store up to 8 normals
-        const uint8_t* normal_masks = nullptr;
-        vec4_t* normals = nullptr;
-        uint8_t normal_count = 0;
-    };
 
     bool        m_skip_full = true;
     uint32_t    m_triangles_total = 0;
@@ -148,7 +147,7 @@ public:
 
     void begin(const Matrix& m, vec4_t cam);
 
-    void push_box(const Matrix& mat, int* flag);
+    void push_boxes(const Object* objects, uint32_t object_count, uint32_t thread_index = 0);
 
     void push_objects(const Object* objects, uint32_t object_count, uint32_t thread_index = 0);
 

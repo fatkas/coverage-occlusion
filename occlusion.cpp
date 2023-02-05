@@ -364,7 +364,10 @@ public:
 
         void ExecuteRange(enki::TaskSetPartition range, uint32_t thread_index) override
         {
-            m_parent->m_Rasterizer.push_objects(m_parent->m_Objects.data() + range.start, range.end - range.start, thread_index);
+            if (m_parent->m_UseBox)
+                m_parent->m_Rasterizer.push_boxes(m_parent->m_Objects.data() + range.start, range.end - range.start, thread_index);
+            else
+                m_parent->m_Rasterizer.push_objects(m_parent->m_Objects.data() + range.start, range.end - range.start, thread_index);
         }
 
         ExampleOcclusionCulling* m_parent = nullptr;
@@ -495,7 +498,8 @@ public:
                 {
                     auto & t = tiles[idx];
                     auto & t_data = m_Rasterizer.get_tile_data()[idx];
-                    if (ImGui::TreeNode(std::to_string(idx).c_str(), "Tile %d (%d/%d) %s", t.m_x, t_data.triangle_index_count, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : ""))
+                    if (ImGui::TreeNode(std::to_string(idx).c_str(), "Tile %d (%d/%d) %s",
+                                        t.m_x, t_data.triangle_index_count, t.m_triangles_drawn_total, t.m_mask == ~0u ? "full" : std::to_string(__builtin_popcount(t.m_mask)).c_str()))
                     {
                         ImGui::Text("total sorted triangles %d", (uint32_t)t_data.triangle_indices.size());
                         ImGui::Text("total drawn triangles %d", t.m_triangles_drawn_total);
@@ -645,7 +649,10 @@ public:
                 }
                 else
                 {
-                    m_Rasterizer.push_objects(m_Objects.data(), m_Objects.size());
+                    if (m_UseBox)
+                        m_Rasterizer.push_boxes(m_Objects.data(), m_Objects.size());
+                    else
+                        m_Rasterizer.push_objects(m_Objects.data(), m_Objects.size());
                 }
                 int64_t occlusion_mid = bx::getHPCounter();
                 occlusion_push_time = occlusion_mid - occlusion_start;
